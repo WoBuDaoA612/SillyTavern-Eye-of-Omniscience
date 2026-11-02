@@ -1,0 +1,12 @@
+{
+    "display_name": "全视之眼",
+    "loading_order": 105,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "我不到啊",
+    "version": "1.3.0",
+    "homePage": "https://github.com/WoBuDaoA612/SillyTavern-Eye-of-Omniscience",
+    "auto_update": true
+}
