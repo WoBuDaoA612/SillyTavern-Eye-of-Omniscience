@@ -213,11 +213,9 @@ function eyeApplyToRaw(o, e) {
     if (st.type !== undefined) {
       const constant = st.type === 'constant';
       const vectorized = st.type === 'vectorized';
-      // type 只有三档，但 ST 里 selective 与 constant 并不互斥（常驻条目也能带关键词）。
-      // 从 type 反推会把原有的 selective 抹成 false，所以非 selective 档一律沿用原值。
-      const selective = st.type === 'selective' || !!o.selective;
+      /* type 只有三档，反推不出 selective（ST 里它是「选择性逻辑」开关，和常驻与否无关），
+         所以这一项原样保留，不动用户的配置。 */
       if (constant !== !!o.constant) r.constant = constant;
-      if (selective !== !!o.selective) r.selective = selective;
       if (vectorized !== !!o.vectorized) r.vectorized = vectorized;
     }
     if (Array.isArray(st.keys)) {
@@ -386,7 +384,7 @@ function getCharData(target) {
 }
 
 /* 4 条固定规则的内置版本。改这里的正文就等于发布一次新版安装包：
-   用户下次打开扩展设置的安装清单，会看到这一条变成「与内置不同」，
+   用户下次打开扩展设置的安装清单，会看到这一条变成「配置错误」，
    对照之后由他自己决定是否覆盖。 */
 const RULES = [
   {
@@ -440,6 +438,41 @@ const RULES = [
   - 强制隔离视角: 若最高指令的对象不在当前POV视角中，必须严格执行POV视角隔离，禁止在正文中描述执行结果，仅在"<全视之眼_实时监控>"中描述
 </最高指令>`,
   },
+  {
+    name: '设定生成',
+    order: 3334,
+    constant: false,
+    keys: ['<全视之眼-设定生成>'],
+    content: `<设定生成>
+# 全视之眼根据用户输入内容，思维替换为设定生成模型，应用七步思考工作流，生成世界观设定和角色设定文本
+触发: USER输入包含"<全视之眼-设定生成>"时
+效果: 停止创作工作，本次唯一的工作是协助USER生成设定和提供意见建议与反馈
+思考工作流:
+  第一步: 分析设定标题应该是什么，规则见"设定名称"
+  第二步: 分析是通用设定或专用限定，通用→仅设计一个宽泛设定，禁止绑定当前设定下的世界观；专用→设计一个与当前设定下世界观深度融合的设定
+  第三步: 凝炼设定中的关键要素
+  第四步: 设计主要设定
+  第五步: 分析需要向USER反馈的意见建议和问题
+  第六步: 分析思考过程和需要补充的次要设定
+  第七步: 分析每一条结构要求，并完全遵循
+设定生成规则:
+  - 结构要求:
+    - 生成的设定最外层用代码块包裹，代码块内部由<全视之眼_世设补充修正_设定名称>包裹
+    - 标签内侧为严格的yaml结构文本，yaml文本最外层无缩进，相邻层级之间两格缩进
+    - 同级列表项用 - 逐行并列的块序列写法
+    - 在块序列的说明性文本前，用小标题: 说明性文本的格式概括内容，构建标题
+    - ①设定名称、②设定类型、③设定范围、④状态机、四个字段是元信息，不写入设定
+    - A定义或描述、B运行机制、C交互系统三个个字段是元信息，不作为设定内的键名，实际键名由具体的设定字段承担，
+    - 在设定文本之后、在代码块外部，生成意见建议与反馈
+  - 内容要求:
+    - 必要内容: 定义或描述类设定+运行机制类设定+交互系统类设定
+    - 状态机类内容: 可选项，不同条件（如不同阶段）下的差异设定
+  - 文本要求:
+    - 使用主谓宾结构的句子，描述采用"it is"、"it does"、"it did"的句式作为基础
+    - 白描简练，非必要情况下，文本内不插入状语
+  - 设定名称，读取用户输入中的"设定名称"字段命名设定，如无该字段，跳过设定名称命名，将标签暂时命名为<全视之眼_世设补充修正_占位符>
+</设定生成>`,
+  },
 ];
 
 /* ============ 全视之眼 · 安装包定义 ============
@@ -453,20 +486,63 @@ function eyeSaveSettings() {
   if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
 }
 
-function eyeNewRule(uid, index, rule) {
+/* 四条规则词条的递归开关：内置版两项都勾。面板建条目走的是同一套值，
+   安装器新建规则也必须一致，否则删书重装后开关会变成未勾选。 */
+const EYE_RULE_RECURSION = { excludeRecursion: true, preventRecursion: true };
+
+/* 规则词条的插入位置跟随设置页的「强力模式」：开了就全部贴在对话最末的 D0，
+   关了就全部落在角色定义之后。新建和修正都按这里算，否则重装出来的规则会跟其余词条错位。 */
+function eyeRulePos(list) {
+  return powerOn(list) ? { position: 4, depth: 0 } : { position: 1, depth: 0 };
+}
+
+function eyeNewRule(uid, index, rule, pos) {
   const r = eyeNewRaw(uid, index);
   r.comment = rule.name;
   r.content = rule.content;
-  r.constant = true;
+  /* 常驻与否由规则自己定：「设定生成」只在输入里出现触发词时才生效，不进上下文 */
+  r.constant = rule.constant !== false;
+  r.key = Array.isArray(rule.keys) ? rule.keys.slice() : [];
   r.selective = false;
   r.vectorized = false;
-  r.position = 1;
+  r.position = pos.position;
   r.role = 0;
-  r.depth = 0;
+  r.depth = pos.depth;
   r.order = rule.order;
-  r.excludeRecursion = false;
-  r.preventRecursion = false;
+  r.excludeRecursion = EYE_RULE_RECURSION.excludeRecursion;
+  r.preventRecursion = EYE_RULE_RECURSION.preventRecursion;
   return r;
+}
+
+/* 四条规则在酒馆世界书面板里的先后由 displayIndex 决定。
+   已经按内置顺序排好的就不动；缺的那条塞进前后空档，前后贴死就把它后面的整体往后挪一格。
+   顺序被拖乱时，按内置顺序把现有的几个 displayIndex 重新分配（只在这几条之间，不碰别的条目）。 */
+function eyeRuleDisplay(keys, base, seed) {
+  const di = keys.map(k => {
+    const e = k === null ? null : base[k];
+    return e && typeof e.displayIndex === 'number' ? e.displayIndex : null;
+  });
+  const have = di.filter(v => v !== null);
+  const out = di.slice();
+  if (!have.every((v, i) => i === 0 || v > have[i - 1])) {
+    const pool = have.slice().sort((a, b) => a - b);
+    let n = 0;
+    for (let i = 0; i < out.length; i++) if (out[i] !== null) out[i] = pool[n++];
+  }
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] !== null) continue;
+    const prev = i > 0 ? out[i - 1] : null;
+    const next = out.slice(i + 1).filter(v => v !== null)[0];
+    if (prev === null && next === null) out[i] = seed++;
+    else if (prev === null) out[i] = next - 1;
+    else if (next === null) out[i] = seed++;
+    else if (next - prev > 1) out[i] = prev + 1;
+    else {
+      for (let k = i + 1; k < out.length; k++) if (out[k] !== null) out[k] += 1;
+      out[i] = prev + 1;
+    }
+  }
+  return out;
 }
 
 /* ---------- 隐藏监控正则 ---------- */
@@ -511,21 +587,32 @@ function eyeInsHost() {
   return document.getElementById('extensions_settings') || document.getElementById('extensions_settings2');
 }
 
-/* 按行比较，只给出「多几行 / 少几行」的量级，不判断是谁改的。 */
-function eyeLineGap(a, b) {
-  const x = String(a || '').split('\n');
-  const y = String(b || '').split('\n');
-  const m = new Map();
-  for (const l of x) m.set(l, (m.get(l) || 0) + 1);
-  let add = 0;
-  for (const l of y) {
-    const c = m.get(l) || 0;
-    if (c) m.set(l, c - 1);
-    else add++;
+/* 规则词条与内置版的差别：正文、插入位置与深度、顺序、递归开关，逐项分开看。
+   触发式规则（constant=false）还要看常驻开关与触发词；常驻规则不看这两项，
+   因为常驻是由设置页的功能开关在管，不是用户在书里随手改的。
+   启用开关（disable）永远不在这份对照里。 */
+function eyeRuleDiff(hit, rule, pos) {
+  const d = {};
+  if (!hit) return d;
+  if ((hit.content || '') !== rule.content) d.content = true;
+  if (hit.position !== pos.position
+    || (typeof hit.depth === 'number' ? hit.depth : 4) !== pos.depth) d.pos = true;
+  if (hit.order !== rule.order) d.order = true;
+  if (!!hit.excludeRecursion !== EYE_RULE_RECURSION.excludeRecursion
+    || !!hit.preventRecursion !== EYE_RULE_RECURSION.preventRecursion) d.rec = true;
+  if (rule.constant === false) {
+    if (hit.constant !== false) d.flag = true;
+    const want = Array.isArray(rule.keys) ? rule.keys : [];
+    const have = Array.isArray(hit.key) ? hit.key : [];
+    if (want.join('\u0001') !== have.join('\u0001')) d.key = true;
   }
-  let del = 0;
-  for (const c of m.values()) del += c;
-  return { add: add, del: del };
+  return d;
+}
+
+/* 四条在面板里的先后：displayIndex 按内置顺序必须递增。 */
+function eyeRuleSeqOk(hits) {
+  const vals = hits.filter(h => h && typeof h.displayIndex === 'number').map(h => h.displayIndex);
+  return vals.every((v, i) => i === 0 || v > vals[i - 1]);
 }
 
 /* ---------- 检测（只读） ---------- */
@@ -541,17 +628,24 @@ async function eyeScan() {
     entries = {};
   }
   const list = Object.keys(entries).map(k => entries[k]);
+  const pos = eyeRulePos(list);
+  const hits = RULES.map(rule => list.filter(x => x && (x.comment || '') === rule.name)[0] || null);
+  const seqOk = eyeRuleSeqOk(hits);
 
-  for (const rule of RULES) {
-    const hit = list.filter(x => x && (x.comment || '') === rule.name)[0] || null;
+  for (let i = 0; i < RULES.length; i++) {
+    const rule = RULES[i];
+    const hit = hits[i];
     /* disable 是用户在酒馆里的开关，开不开由他定，不参与「是不是最新」的判定 */
     const off = !!(hit && hit.disable === true);
+    const diff = eyeRuleDiff(hit, rule, pos);
+    const bad = !hit || !seqOk
+      || diff.content || diff.pos || diff.order || diff.rec || diff.flag || diff.key;
     items.push({
       id: 'rule:' + rule.name,
       type: 'rule',
       name: rule.name,
       meta: '世界书规则' + (off ? ' · 当前为关闭状态' : ''),
-      state: !hit ? 'missing' : ((hit.content || '') === rule.content ? 'current' : 'diff'),
+      state: bad ? (hit ? 'diff' : 'missing') : 'current',
       builtin: rule.content,
       current: hit ? (hit.content || '') : '',
     });
@@ -592,22 +686,10 @@ function eyeInsEsc(s) {
 function eyeInsTag(state) {
   if (state === 'missing') return '<span class="eye-ins-tag t-miss">未安装</span>';
   if (state === 'current') return '<span class="eye-ins-tag t-ok">已是最新</span>';
-  return '<span class="eye-ins-tag t-diff">与内置不同</span>';
+  return '<span class="eye-ins-tag t-diff">配置错误</span>';
 }
 
 function eyeInsRow(it) {
-  const isRx = it.type === 'regex';
-  let sub = it.meta;
-
-  if (isRx) {
-    if (it.state === 'diff') sub += ' · 与内置表达式不同';
-  } else if (it.state === 'diff') {
-    const gap = eyeLineGap(it.builtin, it.current);
-    sub += gap && (gap.add || gap.del)
-      ? ' · 内置版多 ' + gap.add + ' 行、当前版多 ' + gap.del + ' 行'
-      : ' · 逐行内容相同，顺序或字词有差别';
-  }
-
   const box = it.state === 'current'
     ? '<span class="eye-ins-tick">✓</span>'
     : '<label class="eye-ins-chk"><input type="checkbox" data-pick="' + eyeInsEsc(it.id) + '"'
@@ -624,7 +706,7 @@ function eyeInsRow(it) {
     + '<div class="eye-ins-main">'
     + '<div class="eye-ins-name"><span class="eye-ins-nm">'
     + eyeInsEsc(it.name).replace(/-/g, '-<wbr>') + '</span>' + eyeInsTag(it.state) + '</div>'
-    + '<div class="eye-ins-sub">' + eyeInsEsc(sub) + '</div>'
+    + '<div class="eye-ins-sub">' + eyeInsEsc(it.meta) + '</div>'
     + '</div>'
     + '<button type="button" class="eye-hbtn" data-cmp="' + eyeInsEsc(it.id) + '">对比</button>'
     + '</div>'
@@ -639,8 +721,7 @@ function eyeInsHtml() {
     + '<span class="eye-ins-arrow"></span>'
     + '</summary>'
     + '<div class="eye-ins-body">'
-    + '<div class="eye-ins-note">扩展本体已经运行。下面这些内容需要写进你的世界书和酒馆正则，'
-    + '你确认后才会写入；不勾就不动，世界书里已有的内容也不会被悄悄改掉。</div>'
+    + '<div class="eye-ins-note">扩展本体正在运行中，世界书和正则需要手动写入，请在下方面板中进行操作。</div>'
     + '<div class="eye-ins-list" data-ins="list"><div class="eye-ins-wait">检测中…</div></div>'
     + '<div class="eye-ins-bar">'
     + '<button type="button" class="dg-eye-btn pri" data-ins="apply">安装所选</button>'
@@ -790,21 +871,41 @@ async function eyeInstallRules(names, report) {
   const out = {};
   for (const k of Object.keys(base)) out[k] = base[k];
 
-  let nextDisplay = eyeNextDisplay(base);
+  const list = Object.keys(base).map(k => base[k]);
+  const pos = eyeRulePos(list);
   const used = new Set(Object.keys(base).map(Number));
   const touched = new Set();
   const keepDisable = {};   /* 写入前记下用户对各条的开关键，回读时核对未被改动 */
   let pending = 0;
 
-  for (const rule of RULES) {
-    if (names.indexOf(rule.name) < 0) continue;
-    let hitKey = null;
+  /* 先把四条规则在面板里的先后排回内置顺序，缺的条目按排出来的位置新建 */
+  const keys = RULES.map(rule => {
     for (const k of Object.keys(base)) {
-      if (base[k] && (base[k].comment || '') === rule.name) { hitKey = k; break; }
+      if (base[k] && (base[k].comment || '') === rule.name) return k;
     }
+    return null;
+  });
+  const disp = eyeRuleDisplay(keys, base, eyeNextDisplay(base));
+  const reseq = new Set();
+  for (let i = 0; i < RULES.length; i++) {
+    const k = keys[i];
+    if (k === null || base[k].displayIndex === disp[i]) continue;
+    out[k] = Object.assign({}, out[k], { displayIndex: disp[i] });
+    reseq.add(k);
+    touched.add(k);
+    pending++;
+  }
+
+  for (let i = 0; i < RULES.length; i++) {
+    const rule = RULES[i];
+    if (names.indexOf(rule.name) < 0) continue;
+    const hitKey = keys[i];
     if (hitKey !== null) {
-      const off = base[hitKey].disable === true;
-      if ((base[hitKey].content || '') === rule.content) {
+      const off = out[hitKey].disable === true;
+      const diff = eyeRuleDiff(out[hitKey], rule, pos);
+      const cfg = !!(diff.pos || diff.order || diff.rec || diff.flag || diff.key
+        || reseq.has(hitKey));
+      if (!diff.content && !cfg) {
         report.push({
           name: rule.name,
           ok: true,
@@ -812,19 +913,30 @@ async function eyeInstallRules(names, report) {
         });
         continue;
       }
-      out[hitKey] = Object.assign({}, base[hitKey], { content: rule.content });
-      keepDisable[hitKey] = base[hitKey].disable === true;
+      /* 哪项不对就只改哪项，其余字段照旧一个字不动 */
+      const patch = {};
+      if (diff.content) patch.content = rule.content;
+      if (diff.pos) { patch.position = pos.position; patch.depth = pos.depth; }
+      if (diff.order) patch.order = rule.order;
+      if (diff.rec) {
+        patch.excludeRecursion = EYE_RULE_RECURSION.excludeRecursion;
+        patch.preventRecursion = EYE_RULE_RECURSION.preventRecursion;
+      }
+      if (diff.flag) patch.constant = false;
+      if (diff.key) patch.key = (rule.keys || []).slice();
+      out[hitKey] = Object.assign({}, out[hitKey], patch);
+      keepDisable[hitKey] = off;
       touched.add(hitKey);
       pending++;
       report.push({
         name: rule.name,
         ok: true,
-        msg: '已更新' + (off ? '；该词条仍为关闭状态，开关未改动' : ''),
+        msg: '已更新' + (off ? '；该词条仍为关闭状态' : ''),
       });
     } else {
       const uid = eyeFreeUid(used);
       const key = String(uid);
-      out[key] = eyeNewRule(uid, nextDisplay++, rule);
+      out[key] = eyeNewRule(uid, disp[i], rule, pos);
       touched.add(key);
       pending++;
       report.push({ name: rule.name, ok: true, msg: '已安装' });
@@ -857,6 +969,27 @@ async function eyeInstallRules(names, report) {
       .filter(x => x && (x.comment || '') === rule.name)[0];
     if (!hit) throw new Error('回读缺少规则：' + rule.name);
     if ((hit.content || '') !== rule.content) throw new Error('回读内容不符：' + rule.name);
+    if (hit.position !== pos.position
+      || (typeof hit.depth === 'number' ? hit.depth : 4) !== pos.depth) {
+      throw new Error('回读插入位置不符：' + rule.name);
+    }
+    if (hit.order !== rule.order) throw new Error('回读顺序不符：' + rule.name);
+    if (!!hit.excludeRecursion !== EYE_RULE_RECURSION.excludeRecursion
+      || !!hit.preventRecursion !== EYE_RULE_RECURSION.preventRecursion) {
+      throw new Error('回读递归开关不符：' + rule.name);
+    }
+    if (rule.constant === false) {
+      if (hit.constant !== false) throw new Error('回读常驻开关不符：' + rule.name);
+      const want = Array.isArray(rule.keys) ? rule.keys : [];
+      const have = Array.isArray(hit.key) ? hit.key : [];
+      if (want.join('\u0001') !== have.join('\u0001')) {
+        throw new Error('回读触发词不符：' + rule.name);
+      }
+    }
+  }
+  if (!eyeRuleSeqOk(RULES.map(rule => Object.keys(after.entries).map(k => after.entries[k])
+    .filter(x => x && (x.comment || '') === rule.name)[0] || null))) {
+    throw new Error('回读发现规则的先后仍然不对');
   }
   for (const k of Object.keys(keepDisable)) {
     if (!after.entries[k]) throw new Error('回读缺少条目：' + k);
@@ -900,8 +1033,8 @@ function eyeInstallRegex(report) {
   hit.findRegex = EYE_REGEX_FIND;
   eyeSaveSettings();
 
-  let msg = '匹配式已更新';
-  if (hit.disabled === true) msg += '；该正则仍为关闭状态，开关未改动';
+  let msg = '已更新';
+  if (hit.disabled === true) msg += '；该正则仍为关闭状态';
   report.push({ name: EYE_REGEX_NAME, ok: true, msg: msg });
 }
 
@@ -1049,6 +1182,7 @@ function masterOn(list) {
 const MOD_NAMES = {
   '<监视对象>': 'mon', '</监视对象>': 'mon',
   '实时监控': 'mon', '设定修正': 'set', '最高指令': 'cmd',
+  '设定生成': 'gen',
 };
 
 function modOfEntry(e) {
@@ -1064,6 +1198,8 @@ function modOfKind(kind) {
 }
 
 function wantConst(mod, list) {
+  /* 设定生成按触发词走，任何时候都不进常驻上下文 */
+  if (mod === 'gen') return false;
   if (!masterOn(list)) return false;
   if (!mod) return true;
   return modsMap()[mod] !== false;
@@ -1086,8 +1222,14 @@ function powerOn(list) {
   if (v === '1') return true;
   if (v === '0') return false;
   const arr = (Array.isArray(list) ? list : []).filter(e => slotOn(e));
-  return arr.length > 0 && arr.every(e =>
-    e.position && e.position.type === 'at_depth' && e.position.depth === 0);
+  return arr.length > 0 && arr.every(e => {
+    /* 面板取出的是 position 对象，安装器读的是原始条目（position 是数字），两种都要认 */
+    const p = e.position;
+    const obj = p && typeof p === 'object';
+    const type = obj ? p.type : EYE_POS_TO_NAME[p];
+    const depth = obj ? p.depth : e.depth;
+    return type === 'at_depth' && depth === 0;
+  });
 }
 
 /* ---------- 输入强化 ----------
@@ -1478,6 +1620,72 @@ function parseDoc(content, kind) {
   return blocks.filter(b => b.head);
 }
 
+/* 「设定生成」的产出是「代码块 → 标签 → yaml」三层包裹的文本，粘贴回世设页时按这套结构拆开。 */
+function unFence(txt) {
+  return String(txt == null ? '' : txt).split(/\r?\n/)
+    .filter(l => !/^[ \t]*```/.test(l)).join('\n');
+}
+
+function yamlItems(lines) {
+  const out = [];
+  let base = -1;
+  let prev = -1;
+  for (const raw of lines) {
+    const s = String(raw == null ? '' : raw);
+    if (!s.trim()) continue;
+    const m = s.match(/^([ \t]*)[-*·]\s*(.+)$/);
+    const pad = (m ? m[1] : (s.match(/^[ \t]*/) || [''])[0]).replace(/\t/g, '  ').length;
+    const text = m ? m[2].trim() : s.trim();
+    let depth = Math.floor(pad / 2);
+    if (!text || text === EMPTY_MARK) continue;
+    if (base < 0) { base = depth; depth = 0; }
+    else {
+      depth = Math.max(0, depth - base);
+      if (out.length && depth > prev + 1) depth = prev + 1;
+    }
+    out.push(padItem(depth, text));
+    prev = depth;
+  }
+  return out;
+}
+
+function parsePasteDoc(txt, kind) {
+  const body = unFence(txt);
+  const label = KINDS[kind].label;
+  const reOpen = new RegExp('^<全视之眼[_-]' + label + '_([^>]+)>$');
+  const reClose = new RegExp('^</全视之眼[_-]' + label + '_[^>]+>$');
+  const blocks = [];
+  let cur = '';
+  let buf = [];
+  const flush = () => {
+    const items = cur ? yamlItems(buf) : [];
+    if (cur && items.length) blocks.push({ head: cur, items: items });
+    cur = ''; buf = [];
+  };
+  for (const raw of body.split(/\r?\n/)) {
+    const t = String(raw).trim();
+    const mo = t.match(reOpen);
+    if (mo) { flush(); cur = mo[1].trim(); continue; }
+    if (reClose.test(t)) { flush(); continue; }
+    if (cur) buf.push(raw);
+  }
+  flush();
+  if (!blocks.length) {
+    const items = yamlItems(body.split(/\r?\n/));
+    const head = String(WORLD_HEAD || '').trim() ||
+      (kind === 'world' ? '世界观' : String(MON_SEL || '').trim());
+    if (items.length && head) blocks.push({ head: head, items: items });
+  }
+  return blocks;
+}
+
+function looksLikeDoc(txt) {
+  const t = String(txt == null ? '' : txt);
+  if (/<全视之眼[_-]/.test(t)) return true;
+  if (t.indexOf('\n') < 0) return false;
+  return /(^|\n)[ \t]{2,}\S/.test(t) || /(^|\n)[ \t]*```/.test(t);
+}
+
 function pickHead(kind, blocks) {
   const want = String((kind === 'world' ? WORLD_HEAD : MON_SEL) || '').trim();
   if (want) return want;
@@ -1700,6 +1908,21 @@ async function saveBlock(card, head, items, kind) {
     return { ...e, content: body };
   }));
   return true;
+}
+
+async function importDocBlocks(card, blocks, kind) {
+  const slots = await readSlots(kind);
+  const cur = activeSlot(slots, card, kind) || anySlot(slots, card, kind);
+  if (!cur) return (await newSlot(card, kind, makeDoc(blocks, kind), slots, null)).label;
+  let doc = parseDoc(cur.content, kind);
+  for (const b of blocks) doc = mergeBlock(doc, b.head, b.items);
+  const keep = slotName(cur);
+  await updateWorldbookWith(WB_NAME, wb => wb.map(e => {
+    if (slotName(e) !== keep) return e;
+    return { ...e, content: makeDoc(doc, kind) };
+  }));
+  rememberSlot(card, kind, keep);
+  return keep;
 }
 
 async function addTarget(card, name, kind) {
@@ -1965,6 +2188,7 @@ const VIEW_TITLE = {
   record: ['记录', '监视名单条目'],
   cmd:    ['指令', '对任意角色下达最高指令'],
   world:  ['设定', '世界观设定 · 角色设定'],
+  gen:    ['设定生成', '按需生成世界观与角色设定'],
   file:   ['档案', '实时监控回溯'],
   set:    ['设置', '调整设置'],
   help:   ['说明', '使用指南'],
@@ -2405,7 +2629,7 @@ function viewBlocked(view) {
   const m = modsMap();
   if (view === 'record' || view === 'file') return !m.mon;
   if (view === 'cmd') return !m.cmd;
-  if (view === 'world') return !m.set;
+  if (view === 'world' || view === 'gen') return !m.set;
   return false;
 }
 
@@ -2471,6 +2695,8 @@ async function renderPanel() {
     html = kind === 'pers'
       ? viewPersHtml(slist.names, card, slist, wbErr, sentries, watch, slist.blocks)
       : viewWorldHtml(slist.names, card, slist, wbErr, sentries, slist.blocks);
+  } else if (PANEL_VIEW === 'gen') {
+    html = viewGenHtml();
   } else if (PANEL_VIEW === 'file') {
     html = viewFileHtml(watch);
   } else if (PANEL_VIEW === 'help') {
@@ -2618,11 +2844,97 @@ function viewCommandHtml(watch) {
     '</section>';
 }
 
+/* 设定页右上角的钢笔按钮：点开「设定生成」页 */
+function penIconHtml() {
+  return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<defs>' +
+      '<linearGradient id="eye-pen-g" x1="10.05" y1="0.8" x2="13.95" y2="18.4" gradientUnits="userSpaceOnUse">' +
+        '<stop offset="0" stop-color="#523c22"/>' +
+        '<stop offset=".52" stop-color="#7e5c2c"/>' +
+        '<stop offset="1" stop-color="#a2803c"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="eye-pen-n" x1="10.05" y1="18.2" x2="13.95" y2="25.4" gradientUnits="userSpaceOnUse">' +
+        '<stop offset="0" stop-color="#ffeec2"/>' +
+        '<stop offset=".48" stop-color="#e5b962"/>' +
+        '<stop offset="1" stop-color="#a1721f"/>' +
+      '</linearGradient>' +
+    '</defs>' +
+    '<g transform="rotate(45 12 12)">' +
+      '<rect x="10.05" y="0.8" width="3.9" height="17.1" rx="1.05" fill="url(#eye-pen-g)"/>' +
+      '<rect x="10.45" y="2.2" width="1.25" height="13.9" rx=".62" fill="#fff8e6" fill-opacity=".3"/>' +
+      '<rect x="10.05" y="1.45" width="3.9" height=".7" fill="#1e1508" fill-opacity=".3"/>' +
+      '<rect x="14.1" y="1.3" width="1.6" height="6.4" rx=".8" fill="#2b1e0c"/>' +
+      '<rect x="14.35" y="1.9" width=".5" height="5.2" rx=".25" fill="#ffe9c0" fill-opacity=".38"/>' +
+      '<rect x="10.05" y="3.4" width="3.9" height=".42" fill="#cfa757" fill-opacity=".85"/>' +
+      '<rect x="10.05" y="4.15" width="3.9" height=".42" fill="#cfa757" fill-opacity=".55"/>' +
+      '<rect x="10.05" y="16.25" width="3.9" height="1.2" fill="#cfa757"/>' +
+      '<rect x="10.05" y="16.25" width="3.9" height=".42" fill="#ffeec2" fill-opacity=".6"/>' +
+      '<rect x="10.05" y="17.15" width="3.9" height=".35" fill="#241a08" fill-opacity=".45"/>' +
+      '<path d="M10.05 17.85h3.9l-1.2 5.55L12 25.7l-.75-2.3z" fill="url(#eye-pen-n)"/>' +
+      '<path d="M12 18.3v6.9" stroke="#3a2a0c" stroke-width=".85" stroke-opacity=".6" stroke-linecap="round"/>' +
+      '<path d="M10.3 18.05h1.15l-1 4.35-.55-1.6z" fill="#fffdf2" fill-opacity=".5"/>' +
+    '</g>' +
+    '</svg>';
+}
+
 function setTabsHtml() {
-  return '<div class="eye-tabs" id="eye-stabs">' +
+  return '<div class="eye-set-top">' +
+    '<div class="eye-tabs" id="eye-stabs">' +
     '<span class="eye-tab' + (SET_TAB === 'world' ? ' on' : '') + '" data-stab="world">世设</span>' +
     '<span class="eye-tab' + (SET_TAB === 'pers' ? ' on' : '') + '" data-stab="pers">人设</span>' +
+    '</div>' +
+    '<span class="eye-pen" id="eye-gen-open" title="设定生成">' + penIconHtml() + '</span>' +
     '</div>';
+}
+
+/* 设定生成页的四个选项：名称随打随记，三个分档各自下拉。
+   只活在这一个页面里，切走再回来还在。 */
+const GEN_OPTS = { name: '', kind: '世设', scope: '通用', fsm: '启用' };
+
+function genSelHtml(id, vals, cur, lockVal) {
+  const opts = vals.map(v =>
+    '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') +
+    (!!lockVal && v === lockVal ? ' disabled' : '') + '>' + esc(v) + '</option>').join('');
+  return '<span class="eye-gen-sel"><select id="' + id + '">' + opts + '</select></span>';
+}
+
+function genOptsHtml() {
+  return '<div class="eye-gen-opts"><div class="eye-gen-opt">' +
+      '<span class="eye-gen-lb">设定名称</span>' +
+      '<span class="eye-gen-lb">设定类型</span>' +
+      '<span class="eye-gen-lb">设定范围</span>' +
+      '<span class="eye-gen-lb">状态机</span>' +
+      '<input id="eye-gen-name" placeholder="可空" value="' + esc(GEN_OPTS.name) + '">' +
+      genSelHtml('eye-gen-kind', ['世设', '人设'], GEN_OPTS.kind, '人设') +
+      genSelHtml('eye-gen-scope', ['通用', '专用'], GEN_OPTS.scope, '') +
+      genSelHtml('eye-gen-fsm', ['启用', '禁用'], GEN_OPTS.fsm, '') +
+    '</div></div>';
+}
+
+function viewGenHtml() {
+  return '<section class="eye-sec">' +
+      '<div class="eye-gen-h">' +
+        '<span class="eye-sec-t">使用说明</span>' +
+        '<span class="eye-spacer"></span>' +
+        '<span class="eye-hbtn" id="eye-gen-back">返回设定</span>' +
+      '</div>' +
+      '<div class="eye-gen-note">' +
+        '<p>输入你的要求后，AI会为了创作格式化的相关设定，按照七个规定步骤分析你的要求，产出设定。目前，该功能仅支持生成世设，未对生成人设进行任何适配。</p>' +
+        '<ul>' +
+          '<li>明确定义和功能：明确的定义和功能设计，有助于AI生成你想要的设定文本</li>' +
+          '<li>自动生成状态机：AI会根据你的要求，自动生成阶段化、条件化的状态机系统</li>' +
+          '<li>定义名称：请为你需要的设定取一个名称，若未命名，AI将以占位符暂时替代</li>' +
+          '<li>工作原理：点击发送后，系统会将你的要求发送给AI，由AI根据内置框架生成设定文本</li>' +
+          '<li>工作产物：AI受到要求后，会输出标签包裹的yaml设定文本，可点击代码块右上角复制，粘贴到世设界面的"内容"框内后，系统会自动解析导入</li>' +
+        '</ul>' +
+      '</div>' +
+      genOptsHtml() +
+      '<div class="eye-add eye-gen-row">' +
+        '<input id="eye-gen-text" placeholder="写下你要生成的设定要求">' +
+        '<span class="dg-eye-btn pri eye-gen-send" id="eye-gen-send">发送</span>' +
+      '</div>' +
+      '<div class="dg-eye-msg"></div>' +
+    '</section>';
 }
 
 function viewWorldHtml(items, card, list, wbErr, entries, blocks) {
@@ -3578,6 +3890,19 @@ function shorten(s) {
 
 function bindPanel() {
   const d = doc;
+  const genOpen = d.getElementById('eye-gen-open');
+  if (genOpen) genOpen.addEventListener('click', () => openView('gen'));
+  const genBack = d.getElementById('eye-gen-back');
+  if (genBack) genBack.addEventListener('click', () => openView('world'));
+  const genSend = d.getElementById('eye-gen-send');
+  if (genSend) genSend.addEventListener('click', doGenSend);
+  const genName = d.getElementById('eye-gen-name');
+  if (genName) genName.addEventListener('input', () => { GEN_OPTS.name = genName.value; });
+  [['eye-gen-kind', 'kind'], ['eye-gen-scope', 'scope'], ['eye-gen-fsm', 'fsm']].forEach(g => {
+    const sel = d.getElementById(g[0]);
+    if (!sel) return;
+    sel.addEventListener('change', () => { GEN_OPTS[g[1]] = sel.value; });
+  });
   const kind = viewKind();
   const k = KINDS[kind];
   const isWorld = kind === 'world';
@@ -3609,6 +3934,37 @@ function bindPanel() {
     }
   };
   if (addBtn) addBtn.addEventListener('click', doAdd);
+
+  const doImport = async text => {
+    if (BUSY) { tip('正在处理上一步，稍候再点', true); return; }
+    const blocks = parsePasteDoc(text, 'world');
+    if (!blocks.length) { tip('没有识别到可用的设定内容', true); return; }
+    const card = currentCharName();
+    if (!card) { tip('取不到当前角色卡名，无法分组', true); return; }
+    BUSY = true; if (addBtn) addBtn.style.opacity = '.45';
+    try {
+      await importDocBlocks(card, blocks, 'world');
+      WORLD_HEAD = blocks[0].head;
+      if (inp) inp.value = '';
+      const tin = d.getElementById('eye-new-t');
+      if (tin) tin.value = '';
+      tip('已加入世设：' + blocks.map(b => b.head).join('、'));
+      await renderPanel();
+    } catch (e) {
+      tip('加入失败：' + (e && e.message ? e.message : e), true);
+    } finally {
+      BUSY = false; if (addBtn) addBtn.style.opacity = '';
+    }
+  };
+  if (inp && isWorld) {
+    inp.addEventListener('paste', e => {
+      const cd = e.clipboardData;
+      const txt = cd && cd.getData ? cd.getData('text') : '';
+      if (!txt || !looksLikeDoc(txt)) return;
+      e.preventDefault();
+      doImport(txt);
+    });
+  }
   if (inp) {
     inp.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -4245,6 +4601,40 @@ function settingSendText(raw) {
   const s = String(raw == null ? '' : raw).replace(/^[ \t]+/, '').replace(/^[-*·]\s*/, '').trim();
   if (!s) return '';
   return splitHead(s) || s;
+}
+
+/* 设定生成：触发词 + 用户写的要求，一起放进聊天输入栏，不自动发送 */
+/* 标签内先放用户原话，再跟四个部分，最后用闭合标签收尾。
+   名称留空就不写这一行，其余三项总有值。 */
+function genSendText(req) {
+  const lines = [req];
+  const nm = String(GEN_OPTS.name || '').trim();
+  if (nm) lines.push('设定名称: ' + nm);
+  lines.push('设定类型: ' + GEN_OPTS.kind);
+  lines.push('设定范围: ' + GEN_OPTS.scope);
+  lines.push('状态机: ' + GEN_OPTS.fsm);
+  return '<全视之眼-设定生成>\n' + lines.join('\n') + '\n</全视之眼-设定生成>';
+}
+
+function doGenSend() {
+  const d = doc;
+  const ta = d.getElementById('eye-gen-text');
+  const s = ta ? String(ta.value || '').trim() : '';
+  if (!s) { tip('先写下要生成的设定要求', true); return; }
+  const box = d.getElementById('send_textarea');
+  if (!box) { tip('没找到输入栏', true); return; }
+
+  const txt = genSendText(s);
+  const cur = box.value || '';
+  box.value = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + txt : txt;
+  try {
+    const P = window;
+    box.dispatchEvent(new (P.Event || Event)('input', { bubbles: true }));
+  } catch (e) {}
+  try { box.focus(); box.selectionStart = box.selectionEnd = box.value.length; } catch (e) {}
+  tip('已附加到输入栏');
+  const panel = d.getElementById('dg-eye-panel');
+  if (panel && panel.style.display !== 'none') panel.style.display = 'none';
 }
 
 function doSendSetting(raw) {
