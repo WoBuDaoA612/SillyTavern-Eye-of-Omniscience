@@ -33,7 +33,7 @@
   .dg-eye-ball:active{ cursor:grabbing; }
   .dg-eye-ball.dragging{ transition:none; filter:brightness(1.14); }
   .dg-eye-ball img{
-    position:absolute; left:7px; top:7px; width:42px; height:42px;
+    position:absolute; left:0; top:0; width:var(--eye-ball-size, 56px); height:var(--eye-ball-size, 56px);
     border-radius:50%; display:block; pointer-events:none;
     box-shadow:0 2px 12px rgba(0,0,0,.55), 0 0 12px 1px rgba(231,184,115,.20), 0 0 26px 5px rgba(233,196,106,.07);
     transition:box-shadow .4s, transform .4s;
@@ -44,20 +44,11 @@
     to  { box-shadow:0 2px 12px rgba(0,0,0,.55), 0 0 16px 3px rgba(231,184,115,.26), 0 0 34px 7px rgba(233,196,106,.10); }
   }
   .dg-eye-ball .gloss{
-    position:absolute; left:7px; top:7px; width:42px; height:42px; border-radius:50%;
-    background:radial-gradient(circle at 32% 24%, rgba(255,255,255,.30) 0%, rgba(255,255,255,.08) 26%, transparent 46%);
+    position:absolute; left:14px; top:14px; width:28px; height:28px; border-radius:50%;
+    background:radial-gradient(circle at 32% 24%, rgba(255,255,255,.17) 0%, rgba(255,255,255,.045) 26%, transparent 46%);
     pointer-events:none;
   }
-  .dg-eye-ball svg.oring{
-    position:absolute; inset:0; width:100%; height:100%;
-    overflow:visible; transform-origin:28px 28px;
-    animation:dg-eye-spin 16s linear infinite; opacity:.9;
-    transition:opacity .4s, filter .4s; pointer-events:none;
-  }
-  .dg-eye-ball svg.oring.r2{ animation:dg-eye-spin 22s linear infinite reverse; opacity:.6; }
   @keyframes dg-eye-spin{ to{ transform:rotate(360deg); } }
-  .dg-eye-ball.active svg.oring{ opacity:1; filter:drop-shadow(0 0 4px rgba(231,184,115,.45)); }
-  .dg-eye-ball.active svg.oring.r2{ opacity:.9; }
   .dg-eye-ball.active img{
     animation:none;
     box-shadow:0 2px 14px rgba(0,0,0,.55), 0 0 18px 4px rgba(231,184,115,.30), 0 0 40px 8px rgba(233,196,106,.10);
