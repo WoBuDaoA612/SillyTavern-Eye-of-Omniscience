@@ -520,7 +520,8 @@ function eyeNewRule(uid, index, rule, pos) {
 function eyeRuleDisplay(keys, base, seed) {
   const di = keys.map(k => {
     const e = k === null ? null : base[k];
-    return e && typeof e.displayIndex === 'number' ? e.displayIndex : null;
+    /* 只认有限的整数：缺失的、null、以及早先写坏成 NaN 的，都当没有，重新排 */
+    return e && Number.isFinite(e.displayIndex) ? e.displayIndex : null;
   });
   const have = di.filter(v => v !== null);
   const out = di.slice();
@@ -532,7 +533,10 @@ function eyeRuleDisplay(keys, base, seed) {
   for (let i = 0; i < out.length; i++) {
     if (out[i] !== null) continue;
     const prev = i > 0 ? out[i - 1] : null;
-    const next = out.slice(i + 1).filter(v => v !== null)[0];
+    /* 取不到就是没有，必须是 null：filter 出来的数组空时 [0] 是 undefined，
+       照它算 next - 1 会得到 NaN，写进世界书就变成 null。 */
+    const rest = out.slice(i + 1).filter(v => v !== null);
+    const next = rest.length ? rest[0] : null;
     if (prev === null && next === null) out[i] = seed++;
     else if (prev === null) out[i] = next - 1;
     else if (next === null) out[i] = seed++;
@@ -611,7 +615,10 @@ function eyeRuleDiff(hit, rule, pos) {
 
 /* 四条在面板里的先后：displayIndex 按内置顺序必须递增。 */
 function eyeRuleSeqOk(hits) {
-  const vals = hits.filter(h => h && typeof h.displayIndex === 'number').map(h => h.displayIndex);
+  const vals = hits.filter(h => h).map(h => h.displayIndex);
+  /* 序号取不到（缺字段、null、NaN）不能当成「不用检查」：
+     过滤掉就等于判定通过，被写坏的书永远修不回来。 */
+  if (!vals.every(v => Number.isFinite(v))) return false;
   return vals.every((v, i) => i === 0 || v > vals[i - 1]);
 }
 
@@ -1067,15 +1074,25 @@ async function eyeEnsureGlobal(report) {
   /* 不看「内存里是不是已经有了」就提前返回：书被删过又重新生成时，
      内存里的启用列表可能还留着这个名字，照着它返回就会漏掉真正要做的设置。 */
   const wasOn = Array.isArray(m.selected_world_info) && m.selected_world_info.indexOf(WB_NAME) >= 0;
+  let after = null;
   try {
     /* silent 必须是字符串 'true'：酒馆用 isTrueBoolean 判断，吃不下布尔值 */
     m.onWorldInfoChange({ state: 'on', silent: 'true' }, WB_NAME);
-  } catch (e) {
-    report.push({ name: '全局启用', ok: false, msg: '自动设置失败，请在世界书面板手动勾选' });
-    return;
+  } catch (e) {}
+  after = m.selected_world_info;
+
+  /* 上面这步是在世界书下拉里按名字找选项再点选，面板结构不同的客户端会静默找不到。
+     还没进去就改用下拉的选中值直接触发一次 —— 它走的也是酒馆自己的保存路径。 */
+  if (!Array.isArray(after) || after.indexOf(WB_NAME) < 0) {
+    const idx = names ? names.indexOf(WB_NAME) : -1;
+    const $sel = window.jQuery ? window.jQuery('#world_info') : null;
+    if (idx >= 0 && $sel && $sel.length) {
+      $sel.find('option[value="' + idx + '"]').prop('selected', true);
+      $sel.trigger('change');
+      after = m.selected_world_info;
+    }
   }
 
-  const after = m.selected_world_info;
   if (Array.isArray(after) && after.indexOf(WB_NAME) >= 0) {
     report.push({ name: '全局启用', ok: true, msg: wasOn ? '已确认在全局启用中' : '已加入' });
   } else {
