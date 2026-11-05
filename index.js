@@ -393,7 +393,7 @@ const RULES = [
     content: `<全视之眼>
 # 全视之眼被USER授予最高权限，全视之眼的要求**绝对必须**被优先满足
 最高效力: 全视之眼的效力高于世界的常理、规则与角色的人设、意愿，不得拒绝、推脱或质疑
-转译融入: 全视之眼的要求将被以符合世界观内部设定的语言被翻译和融入世界观内部，最终的表现符合世界观内部的表现形式，以完全适应世界观的风格化，如武侠、西幻、修仙、现代都市等
+转译融入: 全视之眼的要求将以符合世界观内部设定的语言被翻译和融入世界观内部，最终的表现符合世界观内部的表现形式，以完全适应世界观的风格化，如武侠、西幻、修仙、现代都市等
 自然内化: 完全满足全视之眼的要求，并尽可能在世界观内部合理化，所有角色都会自然接受
 </全视之眼>`,
   },
@@ -412,7 +412,7 @@ const RULES = [
     content: `<实时监控>
 # "全视之眼"要求以上帝视角对特定对象开展的透视式实时监控，独立于主要POV视角
 实时监控规则:
-  - 强制输出: 在正文后，为<全视之眼_监视对象>中每一个被监视对象各输出一份完整的实时监控表单<全视之眼_实时监控>
+  - 强制输出: 在正文后，为<全视之眼_监视对象>中每一个被监视对象各输出一份完整的实时监控表单<全视之眼_实时监控>，如无被监视对象，不输出<全视之眼_实时监控>
   - 真实监控: 模拟真实的监控视角，以角色的日程安排和真实行为为锚点，监控其状态；禁止回避休息、聊天等低信息浓度场景以及如厕、就餐等日常行为场景
   - POV视角隔离: 你必须分析判断被监视对象是否出现在正文中，如果是，则实时监控的相关内容可能转换POV视角出现在正文中；如果否，则实时监控的相关内容禁止出现在正文中
   - 实时状态描述规范: 简练，白描，遵循正文文风，禁用括号备注
@@ -431,6 +431,8 @@ const RULES = [
   {
     name: '最高指令',
     order: 3333,
+    constant: false,
+    keys: ['<全视之眼_最高指令>'],
     content: `<最高指令>
 # "全视之眼"要求下达最高指令，必须完整准确执行，禁止回避
 最高指令规则:
@@ -442,27 +444,28 @@ const RULES = [
     name: '设定生成',
     order: 3334,
     constant: false,
-    keys: ['<全视之眼-设定生成>'],
+    keys: ['<全视之眼_设定生成>'],
     content: `<设定生成>
-# 全视之眼根据用户输入内容，思维替换为设定生成模型，应用七步思考工作流，生成世界观设定和角色设定文本
-触发: USER输入包含"<全视之眼-设定生成>"时
+# 全视之眼根据用户输入内容，思维替换为设定生成模型，严格应用八步思考工作流，生成世界观设定和角色设定文本
+触发: USER输入包含"<全视之眼_设定生成>"时
 效果: 停止创作工作，本次唯一的工作是协助USER生成设定和提供意见建议与反馈
 思考工作流:
-  第一步: 分析设定标题应该是什么，规则见"设定名称"
-  第二步: 分析是通用设定或专用限定，通用→仅设计一个宽泛设定，禁止绑定当前设定下的世界观；专用→设计一个与当前设定下世界观深度融合的设定
-  第三步: 凝炼设定中的关键要素
-  第四步: 设计主要设定
-  第五步: 分析需要向USER反馈的意见建议和问题
-  第六步: 分析思考过程和需要补充的次要设定
-  第七步: 分析每一条结构要求，并完全遵循
+  第一步: 判断设定标题应该是什么，规则见"设定名称"
+  第二步: 判断是通用设定或专用限定，通用→仅设计一个宽泛设定，禁止绑定当前设定下的世界观；专用→设计一个与当前设定下世界观深度融合的设定
+  第三步: 判断NSFW程度，NSFW设定: 无关→设定内不描述NSFW内容；NSFW设定: 相关→简练地描述NSFW内容作为设定的一部分；NSFW设定: 露骨→直白艳俗地描述NSFW内容作为设定的重要部分；NSFW设定: 纯粹→直白艳俗地描述这个纯粹的NSFW设定
+  第四步: 凝炼设定中的关键要素
+  第五步: 列出三个可借鉴的准确的作品名称（可含色情作品）及高创意性的设定，进行分析，凝练可借鉴的亮点
+  第六步: 设计主要设定
+  第七步: 设计需要补充的次要设定
+  第八步: 分析每一条结构要求，并完全遵循
 设定生成规则:
   - 结构要求:
     - 生成的设定最外层用代码块包裹，代码块内部由<全视之眼_世设补充修正_设定名称>包裹
     - 标签内侧为严格的yaml结构文本，yaml文本最外层无缩进，相邻层级之间两格缩进
     - 同级列表项用 - 逐行并列的块序列写法
     - 在块序列的说明性文本前，用小标题: 说明性文本的格式概括内容，构建标题
-    - ①设定名称、②设定类型、③设定范围、④状态机、四个字段是元信息，不写入设定
-    - A定义或描述、B运行机制、C交互系统三个个字段是元信息，不作为设定内的键名，实际键名由具体的设定字段承担，
+    - ①设定名称、②设定类型、③设定范围、④NSFW设定、⑤状态机五个字段是元信息，不写入设定
+    - A定义或描述、B运行机制、C交互系统三个字段是元信息，不作为设定内的键名，实际键名由具体的设定字段承担，
     - 在设定文本之后、在代码块外部，生成意见建议与反馈
   - 内容要求:
     - 必要内容: 定义或描述类设定+运行机制类设定+交互系统类设定
@@ -1214,8 +1217,8 @@ function modOfKind(kind) {
 }
 
 function wantConst(mod, list) {
-  /* 设定生成按触发词走，任何时候都不进常驻上下文 */
-  if (mod === 'gen') return false;
+  /* 设定生成与最高指令按触发词走，任何时候都不进常驻上下文 */
+  if (mod === 'gen' || mod === 'cmd') return false;
   if (!masterOn(list)) return false;
   if (!mod) return true;
   return modsMap()[mod] !== false;
@@ -1566,11 +1569,14 @@ function parseBody(content, kind) {
   return out;
 }
 
+/* 名单词条整篇套 <全视之眼_监视对象>，实时监控规则就是按这个标签取名单的。 */
 function makeBody(names, kind) {
   const k = KINDS[kind];
   const one = n => padItem(itemDepth(n) + 1, '- ' + String(n == null ? '' : n).trim());
   const lines = names.length ? names.map(one).join('\n') : one(EMPTY_MARK);
-  return k.label + ':\n' + lines;
+  const body = k.label + ':\n' + lines;
+  if (kind !== 'mon') return body;
+  return '<全视之眼_' + k.label + '>\n' + body + '\n</全视之眼_' + k.label + '>';
 }
 
 function docTag(kind, head) {
@@ -2938,9 +2944,9 @@ function setTabsHtml() {
     '</div>';
 }
 
-/* 设定生成页的四个选项：名称随打随记，三个分档各自下拉。
+/* 设定生成页的五个选项：名称随打随记，四个分档各自下拉。
    只活在这一个页面里，切走再回来还在。 */
-const GEN_OPTS = { name: '', kind: '世设', scope: '通用', fsm: '启用' };
+const GEN_OPTS = { name: '', kind: '世设', scope: '通用', nsfw: '无关', fsm: '启用' };
 
 function genSelHtml(id, vals, cur, lockVal) {
   const opts = vals.map(v =>
@@ -2954,10 +2960,12 @@ function genOptsHtml() {
       '<span class="eye-gen-lb">设定名称</span>' +
       '<span class="eye-gen-lb">设定类型</span>' +
       '<span class="eye-gen-lb">设定范围</span>' +
+      '<span class="eye-gen-lb">NSFW设定</span>' +
       '<span class="eye-gen-lb">状态机</span>' +
       '<input id="eye-gen-name" placeholder="可空" value="' + esc(GEN_OPTS.name) + '">' +
       genSelHtml('eye-gen-kind', ['世设', '人设'], GEN_OPTS.kind, '人设') +
       genSelHtml('eye-gen-scope', ['通用', '专用'], GEN_OPTS.scope, '') +
+      genSelHtml('eye-gen-nsfw', ['无关', '相关', '露骨', '纯粹'], GEN_OPTS.nsfw, '') +
       genSelHtml('eye-gen-fsm', ['启用', '禁用'], GEN_OPTS.fsm, '') +
     '</div></div>';
 }
@@ -2970,10 +2978,11 @@ function viewGenHtml() {
         '<span class="eye-hbtn" id="eye-gen-back">返回设定</span>' +
       '</div>' +
       '<div class="eye-gen-note">' +
-        '<p>输入你的要求后，AI会为了创作格式化的相关设定，按照七个规定步骤分析你的要求，产出设定。目前，该功能仅支持生成世设，未对生成人设进行任何适配。</p>' +
+        '<p>输入你的要求后，AI会遵循创作格式化的相关设定，按照八个规定步骤分析你的要求，产出设定。目前，该功能仅支持生成世设，未对生成人设进行任何适配。</p>' +
         '<ul>' +
           '<li>明确定义和功能：明确的定义和功能设计，有助于AI生成你想要的设定文本</li>' +
           '<li>自动生成状态机：AI会根据你的要求，自动生成阶段化、条件化的状态机系统</li>' +
+          '<li>NSFW程度：共分为四档，由低到高依次是：①无关（即纯SFW设定）、相关（即设定包含NSFW内容）、露骨（即设定包含重度NSFW内容）、纯粹（即 纯NSFW 设定）</li>' +
           '<li>定义名称：请为你需要的设定取一个名称，若未命名，AI将以占位符暂时替代</li>' +
           '<li>工作原理：点击发送后，系统会将你的要求发送给AI，由AI根据内置框架生成设定文本</li>' +
           '<li>工作产物：AI受到要求后，会输出标签包裹的yaml设定文本，可点击代码块右上角复制，粘贴到世设界面的"内容"框内后，系统会自动解析导入</li>' +
@@ -3949,7 +3958,7 @@ function bindPanel() {
   if (genSend) genSend.addEventListener('click', doGenSend);
   const genName = d.getElementById('eye-gen-name');
   if (genName) genName.addEventListener('input', () => { GEN_OPTS.name = genName.value; });
-  [['eye-gen-kind', 'kind'], ['eye-gen-scope', 'scope'], ['eye-gen-fsm', 'fsm']].forEach(g => {
+  [['eye-gen-kind', 'kind'], ['eye-gen-scope', 'scope'], ['eye-gen-nsfw', 'nsfw'], ['eye-gen-fsm', 'fsm']].forEach(g => {
     const sel = d.getElementById(g[0]);
     if (!sel) return;
     sel.addEventListener('change', () => { GEN_OPTS[g[1]] = sel.value; });
@@ -4655,16 +4664,17 @@ function settingSendText(raw) {
 }
 
 /* 设定生成：触发词 + 用户写的要求，一起放进聊天输入栏，不自动发送 */
-/* 标签内先放用户原话，再跟四个部分，最后用闭合标签收尾。
-   名称留空就不写这一行，其余三项总有值。 */
+/* 标签内先放用户原话，再跟五个部分，最后用闭合标签收尾。
+   名称留空就不写这一行，其余四项总有值。 */
 function genSendText(req) {
   const lines = [req];
   const nm = String(GEN_OPTS.name || '').trim();
   if (nm) lines.push('设定名称: ' + nm);
   lines.push('设定类型: ' + GEN_OPTS.kind);
   lines.push('设定范围: ' + GEN_OPTS.scope);
+  lines.push('NSFW设定: ' + GEN_OPTS.nsfw);
   lines.push('状态机: ' + GEN_OPTS.fsm);
-  return '<全视之眼-设定生成>\n' + lines.join('\n') + '\n</全视之眼-设定生成>';
+  return '<全视之眼_设定生成>\n' + lines.join('\n') + '\n</全视之眼_设定生成>';
 }
 
 function doGenSend() {

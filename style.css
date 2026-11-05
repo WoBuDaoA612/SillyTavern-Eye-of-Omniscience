@@ -442,7 +442,7 @@
   }
   .eye-gen-opts{ margin:13px 0 10px; }
   .eye-gen-opt{
-    display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:6px 7px; align-items:center;
+    display:grid; grid-template-columns:1.25fr 1fr 1fr 1fr 1fr; gap:6px 7px; align-items:center;
   }
   .eye-gen-lb{
     font-size:11px; color:var(--eye-mut); letter-spacing:.06em;
