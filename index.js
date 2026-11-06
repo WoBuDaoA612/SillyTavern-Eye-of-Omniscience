@@ -1169,6 +1169,7 @@ const DETACH_KEY = 'dg_eye_detach';
 const PPOS_KEY = 'dg_eye_panel_pos';
 const SIMPLE_KEY = 'dg_eye_simpleanim';
 const BOOST_KEY = 'dg_eye_boost';
+const COVER_KEY = 'dg_eye_cover';
 const LAST_CARD_KEY = 'dg_eye_last_card';
 const SCOPE_SNAP_KEY = 'dg_eye_scope_snap';
 
@@ -1315,6 +1316,10 @@ const BOOST_TEXT = '<!--全视之眼最高权限系统已激活-->';
 
 function boostOn() {
   return readLS(BOOST_KEY) === '1';
+}
+
+function coverOn() {
+  return readLS(COVER_KEY) === '1';
 }
 
 function eyeBoostHit(s) {
@@ -1777,10 +1782,19 @@ function findBlock(blocks, head) {
   return null;
 }
 
-function mergeBlock(blocks, head, items) {
+let MERGE_SKIPPED = 0;
+
+function mergeBlock(blocks, head, items, mode) {
   const list = (blocks || []).map(b => ({ head: b.head, items: (b.items || []).slice() }));
   const hit = findBlock(list, head);
-  if (hit) hit.items = items.slice();
+  if (hit && mode === 'append') {
+    const have = {};
+    topChunks(hit.items).forEach(c => { have[textKey(c.join('\n'))] = 1; });
+    topChunks(items).forEach(c => {
+      if (have[textKey(c.join('\n'))]) { MERGE_SKIPPED++; return; }
+      for (const x of c) hit.items.push(x);
+    });
+  } else if (hit) hit.items = items.slice();
   else if (items.length) list.push({ head: head, items: items.slice() });
   return list;
 }
@@ -1989,12 +2003,12 @@ async function saveBlock(card, head, items, kind) {
   return true;
 }
 
-async function importDocBlocks(card, blocks, kind) {
+async function importDocBlocks(card, blocks, kind, mode) {
   const slots = await readSlots(kind);
   const cur = activeSlot(slots, card, kind) || anySlot(slots, card, kind);
   if (!cur) return (await newSlot(card, kind, makeDoc(blocks, kind), slots, null)).label;
   let doc = parseDoc(cur.content, kind);
-  for (const b of blocks) doc = mergeBlock(doc, b.head, b.items);
+  for (const b of blocks) doc = mergeBlock(doc, b.head, b.items, mode);
   const keep = slotName(cur);
   await updateWorldbookWith(WB_NAME, wb => wb.map(e => {
     if (slotName(e) !== keep) return e;
@@ -2002,6 +2016,24 @@ async function importDocBlocks(card, blocks, kind) {
   }));
   rememberSlot(card, kind, keep);
   return keep;
+}
+
+/* 整块层面的改写：fn 拿到全部块，返回新的块数组 */
+async function rewriteBlocks(card, kind, fn) {
+  let wbNow = null;
+  try { wbNow = await getWorldbook(WB_NAME); } catch (e) {}
+  const slots = await readSlots(kind, wbNow);
+  const cur = activeSlot(slots, card, kind) || anySlot(slots, card, kind);
+  if (!cur) return false;
+  const blocks = fn(parseDoc(cur.content, kind));
+  const body = makeDoc(blocks || [], kind);
+  const keep = slotName(cur);
+  await updateWorldbookWith(WB_NAME, wb => wb.map(e => {
+    if (slotName(e) !== keep) return e;
+    return { ...e, content: body };
+  }));
+  rememberSlot(card, kind, keep);
+  return true;
 }
 
 async function addTarget(card, name, kind) {
@@ -2665,6 +2697,100 @@ const WORLD_PRESETS = [
     W('NTR世界', '世界的张力在于爱人之间忠诚与背叛、痛苦和宽恕的撕扯，主角的女人习惯于暗中出轨，黄毛、大叔、肥宅、巨根扶她等角色将给主角戴绿帽'),
     W('催情精液', '主角的精液会彻底改变接触过的女性的思想，她们将暂时进入发情状态，淫乱地渴求主角的肉棒，事后她们会恢复意识，同时保留对快感的记忆'),
   ] },
+  { g: '其他', items: [
+    W('人可梦',
+      '世界背景:\n' +
+      '  - 世界概述: 女性和男性共同构成标准的人类社会。所有女性天生具备“人可梦”属性，可被男性训练家通过合法契约程序“捕获”并建立主从关系。\n' +
+      '  - 社会常态:\n' +
+      '    - 人可梦与男性一样学习、工作、生活。捕获关系是社会认可的、特殊的亲密与隶属契约形式。\n' +
+      '    - 捕获前提: 必须获得人可梦本人的清醒且自愿的同意。标准流程是双方交往、达成合意后，前往联盟登记机构完成绑定。\n' +
+      '  - 非法强制捕获 (暗面):\n' +
+      '    - 违法手段:\n' +
+      '      - 药物: 使用违禁的神经松弛剂、服从药剂或强烈催情药物，使人可梦意识模糊、判断力下降。\n' +
+      '      - 胁迫: 利用把柄、债务、暴力威胁或心理操控，强迫人可梦同意。\n' +
+      '      - 物理拘束: 使用非法改造的“束缚球”或拘束装置，跳过意志确认环节强行收纳。\n' +
+      '      - 意识干涉: 极端情况下，存在篡改记忆或植入虚假情感的禁忌技术（传闻）。\n' +
+      '    - 后果与黑市:\n' +
+      '      - 非法捕获是重罪。一经查实，训练家执照永久吊销，面临监禁。\n' +
+      '      - 黑市存在非法捕获的人可梦交易、违禁药物与设备流通。联盟持续打击，已非常罕见。\n' +
+      '      - 部分被非法捕获的人可梦会设法向外界求救或逃跑。\n' +
+      '人可梦类型体系:\n' +
+      '  - 主类型 (基于外貌、气质与核心能力倾向):\n' +
+      '    - 幼女型: 通常拥有极高的特攻（技巧/魅惑）成长潜力，但耐久与力量基础极低。天真或早熟反差显著。\n' +
+      '    - 萝莉型: 能力成长较为平衡，或拥有独特的干扰、治愈类天赋技能。\n' +
+      '    - 少女型: 各项能力成长稳健，学习速度快，适应多种风格。\n' +
+      '    - 御姐型: 通常拥有高攻击（主动榨取力）与高防御（耐受力），擅长掌控节奏。\n' +
+      '    - 熟女型: 拥有极高的耐久与恢复力，擅长持久战与深度服务，提供安定感。\n' +
+      '  - 次类型 - 常见萌属性 (影响互动模式、技能学习树与情绪反馈):\n' +
+      '    - 傲娇: 外冷内热，服务时带有别扭的体贴与突如其来的直球。\n' +
+      '    - 无口: 情感表现稀薄，行动精准高效，反馈直接。\n' +
+      '    - 病娇: 占有欲与执念化为强烈的服务热情与掌控欲。\n' +
+      '    - 元气: 开朗主动，善于营造气氛，技能多带鼓舞效果。\n' +
+      '    - 大和抚子: 传统温婉，注重礼仪与周到服务。\n' +
+      '    - 辣妹: 时尚开放，攻势直接猛烈。\n' +
+      '    - 文学少女: 细腻敏感，服务中富含精神层面的交流与挑逗。\n' +
+      '    - 青梅竹马: 信赖感深厚，易于达成默契，组合技条件宽松。\n' +
+      '    - 天然呆: 反应迟钝，举止脱线，常有意外的直球或破格举动。\n' +
+      '    - 冒失娘: 笨手笨脚但努力，容易引发意外“事故”，带来别样刺激。\n' +
+      '    - 腹黑: 表面温和友善，内在善于算计与引导，享受暗中掌控的过程。\n' +
+      '    - 毒舌: 言辞犀利，喜好吐槽与言语打击，但可能以反向激励的方式生效。\n' +
+      '    - 女王: 气质高傲，习惯主导与命令，服务姿态也充满支配感。\n' +
+      '    - 偶像: 习惯展现完美形象，擅长表演与营造梦幻感，服务如同舞台演出。\n' +
+      '    - 女仆: 将服务本身视为天职与荣誉，追求极致规范与体贴。\n' +
+      '    - 兽娘: 带有动物特征（耳、尾等），本能强烈，行为模式更直接或具有野性。\n' +
+      '    - 魔女: 带有神秘感，可能掌握一些非常规的、类似魔法的特殊技巧或药剂知识。\n' +
+      '    - 病弱: 体质虚弱，易疲劳，但可能因此激发保护欲或产生反差性的坚韧。\n' +
+      '    - 运动少女: 体力充沛，身体协调性好，擅长需要体力与技巧结合的高难度动作。\n' +
+      '    - 宅女: 对特定领域（如ACG）有深厚知识，可能将御宅兴趣融入服务或作为交流话题。\n' +
+      '    - 中二病: 沉浸于幻想设定，言行夸张，服务可能充满戏剧性与角色扮演元素。\n' +
+      '榨精实力系统:\n' +
+      '  - 六维能力 (围绕性):\n' +
+      '    - 吮吸力: 口、舌、乳相关的技巧强度。\n' +
+      '    - 紧致度: 阴道/肛门的收缩力与控制。\n' +
+      '    - 柔韧度: 身体可塑性，影响姿势与技能施展范围。\n' +
+      '    - 耐久力: 体力与性爱活动承受力。\n' +
+      '    - 技巧值: 掌握性技巧的广度、深度与创造性。\n' +
+      '    - 魅惑力: 综合运用外貌、声音、气质进行精神攻击的能力。\n' +
+      '  - 奉纳战核心:\n' +
+      '    - 目标: 使训练家/对手在规定情境下射精，并追求更高的“精华评分”。\n' +
+      '    - 精华评分: 由射出量、浓度、射出时的综合表现（技巧、情感投入、对手状态）决定。\n' +
+      '  - 技能与天赋:\n' +
+      '    - 技能: 消耗气力发动，产生直接刺激、状态附加或场地效果。\n' +
+      '    - 类型天赋: 每个主类型拥有一条独特的被动天赋，在奉纳战中持续生效（如幼女型的“纯粹魅惑”-小幅降低对手所有抗性；熟女型的“丰润滋养”-小幅提升己方耐久恢复速度）。\n' +
+      '捕获与培育:\n' +
+      '  - 合法捕获流程:\n' +
+      '    - 前置: 训练家需持有有效执照。\n' +
+      '    - 合意: 双方达成绑定意向。\n' +
+      '    - 登记: 在联盟机构，使用官方“契约球”完成身份绑定与信息录入。契约球内置识别系统，确保双方意识清醒并确认。\n' +
+      '  - 训练家:\n' +
+      '    - 执照: 通过联盟考核（伦理、知识、基础财力）获得。\n' +
+      '    - 核心资源: “精力”与“财力”。需要合理分配以维持人可梦的培育与自身状态。\n' +
+      '  - 图鉴:\n' +
+      '    - 样式: 形式平板电脑的电子设备，带摄像头和显示屏\n' +
+      '    - 功能: 扫描人可梦后，将显示人可梦的类型及其介绍，以及六维能力\n' +
+      '  - 亲密度与成长:\n' +
+      '    - 提升: 共同生活、成功奉纳、赠送礼物、满足愿望。\n' +
+      '    - 效果: 高亲密度解锁隐藏技能、提升能力成长效率、可能触发特殊进化/觉醒事件。\n' +
+      '联盟与社会设施:\n' +
+      '  - 人可梦联盟: 立法、监督、赛事主办、注册管理、打击非法活动。\n' +
+      '  - 登记/公证中心: 处理一切合法契约事务。\n' +
+      '  - 奉纳竞技场: 举办各级别赛事。\n' +
+      '  - 培育屋: 寄养、健康管理、基础训练、匹配相亲。\n' +
+      '  - 技能学院: 传授特定榨精技巧。\n' +
+      '  - 精华评定所: 对奉纳产出进行权威鉴定。\n' +
+      '  - (暗) 黑市: 非法交易的聚集地，流通违禁品与非法捕获的人可梦。\n' +
+      '状态流转:\n' +
+      '  - 人可梦社会身份:\n' +
+      '    - 自由人\n' +
+      '    - 意向期 (接触中)\n' +
+      '    - 契约中\n' +
+      '    - 休养期 (妊娠、伤病等)\n' +
+      '    - 解约/退役\n' +
+      '  - 特殊身体状态:\n' +
+      '    - 发情期 (能力波动，需求增)\n' +
+      '    - 妊娠期 (能力变化，禁赛)\n' +
+      '    - 哺乳期 (特攻相关能力上升)'),
+  ] },
 ];
 
 const PERS_PRESETS = [];
@@ -3021,7 +3147,7 @@ function viewWorldHtml(items, card, list, wbErr, entries, blocks) {
           (compOn ? '收起' : '复合') + '</span>' +
       '</div>' +
       (compOn ? compEditorHtml() : '') +
-      worldItemsHtml(flat) +
+      worldItemsHtml(flat, cur) +
       (compOn ? '' :
         '<div class="eye-add eye-add2">' +
           '<input id="eye-new-t" placeholder="标题（可空）" maxlength="24">' +
@@ -3114,7 +3240,7 @@ function itemTree(items) {
   return roots;
 }
 
-function treeRowHtml(n, strip) {
+function treeRowHtml(n, strip, noRow) {
   const head = splitHead(n.raw);
   const kids = n.kids;
   const has = kids.length > 0;
@@ -3130,15 +3256,43 @@ function treeRowHtml(n, strip) {
       (head ? '<span class="eye-m-name" title="' + esc(n.raw) + '"><b class="eye-m-tag">' + esc(head) + '</b></span>'
             : itemNameHtml(n.raw, strip)) +
       (has ? (cnt ? '<span class="eye-count">' + cnt + '</span>' : '') + '<span class="eye-sp"></span>' : '') +
-      (n.depth === 0 ? '<span class="eye-m-ic" data-snd="' + esc(n.raw) + '" title="把这一条附加到聊天输入栏">' + IC_SEND + '</span>' : '') +
+      (n.depth === 0 && !noRow && viewKind() === 'world' ? '<span class="eye-m-ic" data-bmk="' + n.idx + '" title="保存为自定义世设条目">' + IC_BOOK + '</span>' : '') +
+      (n.depth === 0 && !noRow ? '<span class="eye-m-ic" data-snd="' + esc(n.raw) + '" title="把这一条附加到聊天输入栏">' + IC_SEND + '</span>' : '') +
       '<span class="eye-m-ic" data-pen="' + esc(n.raw) + '" data-i="' + n.idx + '" title="修改">' + IC_PEN + '</span>' +
       '<span class="eye-m-ic danger" data-x="' + esc(n.raw) + '" data-i="' + n.idx + '" title="删除">' + IC_X + '</span>' +
     '</div>' +
     (has ? '<div class="eye-kids"' + (shut ? ' data-shut="1"' : '') + '>' +
-      kids.map(k => treeRowHtml(k, strip)).join('') + '</div>' : '');
+      kids.map(k => treeRowHtml(k, strip, noRow)).join('') + '</div>' : '');
 }
 
-function worldItemsHtml(flat) {
+let LAST_FLAT = [];
+let BLOCK_SHUT = {};
+
+/* 非默认大标题的块，单独占一行放在树的最外层，书签和发送都挂在这一行上 */
+function blockRowHtml(head, cnt) {
+  const shut = !!BLOCK_SHUT[head];
+  return '<div class="eye-member eye-node eye-grp eye-broot">' +
+      '<span class="eye-ico"><span class="eye-ar' + (shut ? '' : ' on') + '" data-btog title="展开或收起子项"></span></span>' +
+      '<span class="eye-m-name eye-broot-t" data-blk="' + esc(head) + '" title="大标题：' + esc(head) + '">' + esc(head) + '</span>' +
+      (cnt ? '<span class="eye-count">' + cnt + '</span>' : '') +
+      '<span class="eye-sp"></span>' +
+      '<span class="eye-m-ic" data-bbmk="' + esc(head) + '" title="保存为自定义世设条目">' + IC_BOOK + '</span>' +
+      '<span class="eye-m-ic" data-bsnd="1" title="把这一块附加到聊天输入栏">' + IC_SEND + '</span>' +
+      '<span class="eye-m-ic" data-bpen="' + esc(head) + '" title="修改">' + IC_PEN + '</span>' +
+      '<span class="eye-m-ic danger" data-bx="' + esc(head) + '" data-bcnt="' + (cnt || 0) + '" title="删除">' + IC_X + '</span>' +
+    '</div>';
+}
+
+/* 同一个世界书条目里可能有多个大标题，按块分组；非默认大标题的块单独占一行 */
+function setTreeIdx(nodes, globals) {
+  (nodes || []).forEach(n => {
+    if (typeof globals[n.idx] === 'number') n.idx = globals[n.idx];
+    setTreeIdx(n.kids, globals);
+  });
+}
+
+function worldItemsHtml(flat, head) {
+  LAST_FLAT = flat || [];
   if (!flat || !flat.length) {
     return '<div class="eye-empty" style="margin-bottom:10px">' +
         '<div class="eye-empty-ico"></div>' +
@@ -3146,11 +3300,26 @@ function worldItemsHtml(flat) {
         '<div class="eye-empty-s">在下方填内容，标题可留空</div>' +
       '</div>';
   }
-  const tree = itemTree(flat.map(x => x.raw));
-  tree.forEach(n => { n.head = String((flat[n.idx] && flat[n.idx].head) || ''); });
-  return '<div class="eye-members">' +
-    tree.map(n => treeRowHtml(n, '')).join('') +
-    '</div>';
+  const groups = [];
+  flat.forEach((x, i) => {
+    const h = String(x.head || '');
+    let g = null;
+    for (const q of groups) if (q.head === h) { g = q; break; }
+    if (!g) { g = { head: h, raws: [], globals: [] }; groups.push(g); }
+    g.raws.push(x.raw);
+    g.globals.push(i);
+  });
+  const parts = groups.map(g => {
+    const tree = itemTree(g.raws);
+    setTreeIdx(tree, g.globals);
+    const own = !!g.head && BLOCK_HEADS.indexOf(g.head) < 0;
+    if (!own) tree.forEach(n => { n.head = g.head; });
+    const inner = tree.map(n => treeRowHtml(n, '', own)).join('');
+    if (!own) return inner;
+    return blockRowHtml(g.head, tree.length) +
+      '<div class="eye-kids"' + (BLOCK_SHUT[g.head] ? ' data-shut="1"' : '') + '>' + inner + '</div>';
+  }).join('');
+  return '<div class="eye-members">' + parts + '</div>';
 }
 
 let COMP_OPEN = false;
@@ -3160,17 +3329,21 @@ let COMP_EDIT = '';
 let COMP_IDX = -1;
 let COMP_BLOCK = '';
 let COMP_ROWS = [];
+/* -1 = 没定位到行；-2 = 光标在「条目标题」框（以此为基准加行） */
+let COMP_CUR = -1;
 
 function compRowsHtml() {
-  if (!COMP_ROWS.length) return '<div class="eye-comp-empty">还没有小标题</div>';
-  return COMP_ROWS.map((r, i) =>
-    '<div class="eye-comp-row" data-i="' + i + '"' +
-      (r.d > 1 ? ' style="padding-left:' + ((r.d - 1) * 15) + 'px"' : '') + '>' +
-      '<input class="eye-comp-t" maxlength="24" placeholder="小标题" value="' + esc(r.t) + '">' +
-      '<input class="eye-comp-x" placeholder="内容" value="' + esc(r.x) + '">' +
+  if (!COMP_ROWS.length) return '<div class="eye-comp-empty">还没有条目标题</div>';
+  return COMP_ROWS.map((r, i) => {
+    const top = !(r.d > 0);
+    const noX = top && !String(r.x || '').trim();
+    return '<div class="eye-comp-row' + (top ? ' top' : '') + (noX ? ' no-x' : '') + '" data-i="' + i + '"' +
+      (top ? '' : ' style="padding-left:' + (r.d * 15) + 'px"') + '>' +
+      '<input class="eye-comp-t" maxlength="24" placeholder="' + (top ? '条目标题（可空）' : '小标题') + '" value="' + esc(r.t) + '">' +
+      (noX ? '' : '<input class="eye-comp-x" placeholder="内容" value="' + esc(r.x) + '">') +
       '<span class="eye-m-ic danger" data-cdel="' + i + '" title="删除这行">' + IC_X + '</span>' +
-    '</div>'
-  ).join('');
+    '</div>';
+  }).join('');
 }
 
 function compEditorHtml() {
@@ -3201,7 +3374,7 @@ function compSync() {
     const i = parseInt(el.getAttribute('data-i'), 10);
     const a = el.querySelector('.eye-comp-t');
     const b = el.querySelector('.eye-comp-x');
-    if (COMP_ROWS[i]) { COMP_ROWS[i].t = a ? a.value : ''; COMP_ROWS[i].x = b ? b.value : ''; }
+    if (COMP_ROWS[i]) { COMP_ROWS[i].t = a ? a.value : ''; if (b) COMP_ROWS[i].x = b.value; }
   });
 }
 
@@ -3220,6 +3393,37 @@ function compFocusRow(i) {
   if (a) a.focus();
 }
 
+/* 记下当前所在的行：加「同级」「下级」都以这一行为基准 */
+function compSetCur(i) {
+  const n = parseInt(i, 10);
+  COMP_CUR = (n >= 0 && n < COMP_ROWS.length) ? n : -1;
+}
+
+/* 在当前行之后插入一行；deeper 为真时层级比当前行深一级。返回新行下标。
+   d 是相对「条目标题」的层级：0 = 与条目标题同级，1 = 条目标题的下级。 */
+function compInsertRow(deeper) {
+  /* 光标停在「条目标题」框、或还没定位到任何行时，都以顶部条目标题为基准：
+     同级＝另一个条目标题，下级＝它的下一级。光标可能已经离开（点按钮会失焦），
+     所以同时看焦点与焦点记录。 */
+  const hIn = doc.getElementById ? doc.getElementById('eye-comp-t') : null;
+  if (COMP_CUR < 0 || (hIn && doc.activeElement === hIn)) {
+    const lv = deeper ? 1 : 0;
+    /* 顶部条目标题自成一块，新行接在这一块末尾：即第一个条目标题行之前，没有则末尾 */
+    let at = 0;
+    while (at < COMP_ROWS.length && COMP_ROWS[at].d > 0) at++;
+    COMP_ROWS.splice(at, 0, { t: '', x: '', d: lv });
+    COMP_CUR = at;
+    return at;
+  }
+  if (COMP_CUR >= COMP_ROWS.length) COMP_CUR = COMP_ROWS.length - 1;
+  const base = COMP_CUR >= 0 ? COMP_ROWS[COMP_CUR] : null;
+  const at = COMP_CUR + 1;
+  const lv = base ? (deeper ? base.d + 1 : base.d) : 0;
+  COMP_ROWS.splice(at, 0, { t: '', x: '', d: lv });
+  COMP_CUR = at;
+  return at;
+}
+
 function compScroll() {
   const box = doc.getElementById('eye-comp-box');
   if (!box || !box.scrollIntoView) return;
@@ -3229,14 +3433,13 @@ function compScroll() {
 function compRaws() {
   const head = String(COMP_HEAD || '').trim();
   const out = [];
-  const shift = head ? 0 : 1;
   if (head) out.push(head + ':');
   for (const r of COMP_ROWS) {
     const t = String(r.t || '').trim();
     const x = String(r.x || '').trim();
     if (!t && !x) continue;
     const s = t ? (x ? t + ': ' + x : t + ':') : x;
-    out.push(padItem(Math.max(0, r.d - shift), s));
+    out.push(padItem(Math.max(0, r.d), s));
   }
   return out;
 }
@@ -3255,8 +3458,7 @@ function compParse(txt) {
     }
     const hd = splitHead(s);
     const it = splitItem(s);
-    const d = head ? Math.max(1, pad / 2) : Math.max(1, pad / 2 + 1);
-    rows.push({ t: hd || it.title, x: hd ? '' : it.text, d: d });
+    rows.push({ t: hd || it.title, x: hd ? '' : it.text, d: Math.floor(pad / 2) });
   }
   return { head: head, rows: rows };
 }
@@ -3268,6 +3470,7 @@ function compReset() {
   COMP_BLOCK = '';
   COMP_HEAD = '';
   COMP_ROWS = [];
+  COMP_CUR = -1;
 }
 
 async function addComposite(card, raws, kind) {
@@ -3318,16 +3521,18 @@ async function compSave() {
   if (!raws.length) { tip('还没有填内容', true); return; }
   BUSY = true;
   try {
+    let done = '';
     if (COMP_EDIT) {
       const ok = await replaceBlock(card, COMP_EDIT, raws, COMP_KIND, COMP_IDX);
       if (!ok) { tip('没找到原条目，可能已被改动，关掉重开面板试试', true); return; }
-      tip('已保存复合条目');
+      done = '已保存复合条目';
     } else {
       await addComposite(card, raws, COMP_KIND);
-      tip('已加入' + (COMP_KIND === 'pers' ? '人设' : '世设'));
+      done = '已加入' + (COMP_KIND === 'pers' ? '人设' : '世设');
     }
     compReset();
     await renderPanel();
+    tip(done);
   } catch (e) {
     tip('保存失败：' + (e && e.message ? e.message : e), true);
   } finally { BUSY = false; }
@@ -3364,7 +3569,9 @@ async function openComposite(raw, kind, idx) {
   COMP_BLOCK = blk;
   COMP_HEAD = splitHead(raw) || '';
   COMP_ROWS = rows.length ? rows : [{ t: '', x: '', d: 1 }];
+  COMP_CUR = -1;
   COMP_OPEN = true;
+  clearCustomEdit();
   await renderPanel();
   compScroll();
 }
@@ -3380,12 +3587,48 @@ function foldHtml(key, title, count, body) {
     '</div>';
 }
 
+const CHIP_MARKS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+
+function chipLabel(text) {
+  const body = splitDocTag(text, 'world').body;
+  const t = String(body || '').trim();
+  if (!t) return shorten(String(text == null ? '' : text));
+  const lines = t.split('\n');
+  const first = lines[0].trim();
+  if (lines.length < 2) return shorten(t);
+  const lb = splitItem(first).title || splitHead(first) || first;
+  return (lb.length > 10 ? lb.slice(0, 10) + '…' : lb) + ' …';
+}
+
+/* 提示语和列表用的短名：只取冒号前的标题，不带内容 */
+function chipTitle(text) {
+  const body = splitDocTag(text, 'world').body;
+  const first = String(body || '').trim().split('\n')[0] || '';
+  const lb = splitItem(first).title || splitHead(first) || first;
+  return lb.length > 10 ? lb.slice(0, 10) + '…' : (lb || shorten(String(text == null ? '' : text)));
+}
+
+/* 一条自定义条目的显示名：优先用单独保存的名字，老条目没有名字就按内容推一个 */
+function entryName(e) {
+  const n = String((e && e.n) || '').trim();
+  return n || chipLabel(e ? e.t : '');
+}
+
 function chipsHtml(arr) {
   if (!arr || !arr.length) return '<span class="eye-chips-empty">自定义条目暂未保存</span>';
-  return arr.map(t => {
-    const first = String(t).split('\n')[0].replace(/\s*[:：]$/, '');
-    const label = String(t).indexOf('\n') >= 0 ? first + ' …' : shorten(t);
-    return '<span class="eye-chip" data-text="' + esc(t) + '" title="' + esc(t) + '">' +
+  const labels = arr.map(e => entryName(e));
+  const total = {};
+  labels.forEach(l => { total[l] = (total[l] || 0) + 1; });
+  const seen = {};
+  return arr.map((e, i) => {
+    let label = labels[i];
+    if (total[label] > 1) {
+      seen[label] = (seen[label] || 0) + 1;
+      label = label + ' ' + (CHIP_MARKS.charAt(seen[label] - 1) || '(' + seen[label] + ')');
+    }
+    const full = splitDocTag(e.t, 'world').body || String(e.t);
+    const tipTxt = label === full ? full : labels[i] + '\n' + full;
+    return '<span class="eye-chip" data-text="' + esc(e.t) + '" title="' + esc(tipTxt) + '">' +
       esc(label) +
       '<span class="eye-chip-x" title="删除">' + IC_MINUS + '</span>' +
     '</span>';
@@ -3398,12 +3641,28 @@ function customMap() {
   try { raw = JSON.parse(window.localStorage.getItem(CUSTOM_KEY) || '{}') || {}; } catch (e) { raw = {}; }
   return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
 }
+/* 一条自定义条目 = 名字 + 正文。老数据存的是纯正文，读出来补一个空名字，显示时按内容推。 */
+function normEntry(x) {
+  if (typeof x === 'string') return x ? { n: '', t: x } : null;
+  if (x && typeof x === 'object' && typeof x.t === 'string' && x.t) {
+    return { n: String(x.n == null ? '' : x.n), t: x.t };
+  }
+  return null;
+}
 function customsOf(card, group) {
   const c = card ? customMap()[card] : null;
   if (!c) return [];
   let arr = Array.isArray(c[group]) ? c[group] : null;
   if (!arr && group === '指令') arr = Array.isArray(c['奖赏']) ? c['奖赏'] : null;
-  return (arr || []).filter((x, i, a) => typeof x === 'string' && x && a.indexOf(x) === i);
+  const out = [];
+  const seen = {};
+  for (const x of (arr || [])) {
+    const e = normEntry(x);
+    if (!e || seen[e.t]) continue;
+    seen[e.t] = 1;
+    out.push(e);
+  }
+  return out;
 }
 function saveCustoms(card, group, arr) {
   if (!card || !group) return;
@@ -3414,6 +3673,426 @@ function saveCustoms(card, group, arr) {
   if (group === '指令') delete m[card]['奖赏'];
   if (!Object.keys(m[card]).length) delete m[card];
   try { window.localStorage.setItem(CUSTOM_KEY, JSON.stringify(m)); } catch (e) {}
+}
+
+/* 自定义条目：正文外面套一行大标题标签，记住它属于哪一块；列表里不显示这一行。 */
+function splitDocTag(text, kind) {
+  const k = KINDS[kind || 'world'];
+  const open = new RegExp('^<' + '全视之眼_' + k.label + '_(.+)>$');
+  const close = new RegExp('^</全视之眼_' + k.label + '_.+>$');
+  let head = '';
+  const body = [];
+  for (const ln of String(text == null ? '' : text).split('\n')) {
+    const t = ln.trim();
+    if (!t) { body.push(ln); continue; }
+    const mo = t.match(open);
+    if (mo) { if (!head) head = mo[1].trim(); continue; }
+    if (close.test(t)) continue;
+    body.push(ln);
+  }
+  return { head: head, body: body.join('\n').replace(/^\n+/, '').replace(/\n+$/, '') };
+}
+
+function wrapDocTag(head, body) {
+  const h = String(head || '').trim();
+  const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
+  if (!h || !b) return b;
+  return docTag('world', h) + '\n' + b + '\n' + docTagEnd('world', h);
+}
+
+/* 判重用的签名：不看写法，只看「第几层 + 这层写了什么」。
+   冒号全半角、缩进几格、行首短横线、行内空格、空行都不参与比较。 */
+function textKey(text) {
+  const rows = [];
+  let stack = [];
+  for (const raw of String(text == null ? '' : text).split(/\r?\n/)) {
+    const s0 = String(raw).replace(/\t/g, '  ');
+    const t0 = s0.trim();
+    if (!t0) continue;
+    if (/^<\/?全视之眼[_-]/.test(t0)) continue;
+    const pad = (s0.match(/^ */) || [''])[0].length;
+    let s = t0.replace(/^[-*·]\s*/, '').replace(/：/g, ':').replace(/\s+/g, ' ').trim();
+    s = s.replace(/\s*:\s*/g, ': ').replace(/:\s*$/, '').trim();
+    if (!s) continue;
+    if (!stack.length) stack = [pad];
+    else {
+      while (stack.length > 1 && pad < stack[stack.length - 1]) stack.pop();
+      if (pad > stack[stack.length - 1]) stack.push(pad);
+    }
+    rows.push((stack.length - 1) + '|' + s);
+  }
+  return rows.join('\n');
+}
+
+function topChunks(items) {
+  const out = [];
+  let cur = null;
+  for (const it of (items || [])) {
+    if (itemDepth(it) === 0 || !cur) { cur = [it]; out.push(cur); }
+    else cur.push(it);
+  }
+  return out;
+}
+
+let BUILTIN_KEYS = null;
+function builtinKeys(group) {
+  if (!BUILTIN_KEYS) {
+    const m = { '世设': {}, '人设': {}, '指令': {} };
+    const add = (g, t, c) => {
+      m[g][textKey(String(t) + ':\n' + String(c || '').split('\n').map(l => '  ' + l).join('\n'))] = 1;
+    };
+    (WORLD_PRESETS || []).forEach(gr => (gr.items || []).forEach(p => add('世设', p.t, p.c)));
+    (PERS_PRESETS || []).forEach(gr => (gr.items || []).forEach(p => add('人设', p.t, p.c)));
+    Object.keys(PRESETS || {}).forEach(k => (PRESETS[k] || []).forEach(p => { m['指令'][textKey(p.tx)] = 1; }));
+    BUILTIN_KEYS = m;
+  }
+  return BUILTIN_KEYS[group] || {};
+}
+
+const BUILTIN_MSG = { '世设': '本条目与默认世设条目重复', '人设': '本条目与默认人设条目重复', '指令': '本条目与默认指令条目重复' };
+const DUP_MSG = { '世设': '本条目已保存在自定义世设内', '人设': '本条目已保存在自定义人设内', '指令': '本条目已保存在自定义指令内' };
+const LOADED_MSG = { '世设': '已载入「{n}」世设', '人设': '已载入「{n}」人设', '指令': '已载入「{n}」指令' };
+const EMPTY_MSG = '内容为空，无法保存';
+function dupMsg(g) { return DUP_MSG[g] || '本条目已保存在自定义条目内'; }
+function loadedMsg(g, name) { return (LOADED_MSG[g] || '已载入「{n}」').replace('{n}', name); }
+
+/* 点开一条已有的自定义条目后，保存时覆盖它本身，不再新增一条重复的。
+   三个值一起记，避免切了卡或切了分组之后误改到另一条。 */
+let CUSTOM_EDIT_RAW = '';
+let CUSTOM_EDIT_GROUP = '';
+let CUSTOM_EDIT_CARD = '';
+function clearCustomEdit() {
+  CUSTOM_EDIT_RAW = '';
+  CUSTOM_EDIT_GROUP = '';
+  CUSTOM_EDIT_CARD = '';
+}
+
+/* 存之前的必要检查：empty 空 / builtin 撞内置 / dup 已有 / '' 可以存 */
+function customBlock(card, group, body) {
+  const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
+  if (!b.trim()) return 'empty';
+  const key = textKey(b);
+  if (!key) return 'empty';
+  if (builtinKeys(group)[key]) return 'builtin';
+  if (customsOf(card, group).some(x => textKey(x.t) === key)) return 'dup';
+  return '';
+}
+
+/* 存一条自定义：added 存了 / dup 已有 / builtin 撞内置 / empty 空 */
+function addCustom(card, group, body, head, name) {
+  const r0 = customBlock(card, group, body);
+  if (r0) return r0;
+  const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
+  const arr = customsOf(card, group);
+  const text = group === '世设' ? wrapDocTag(head || blockHeadOf('world'), b) : b;
+  arr.push({ n: String(name == null ? '' : name).trim(), t: text });
+  saveCustoms(card, group, arr);
+  return 'added';
+}
+
+/* 从编辑区保存自定义：如果这次是从已有条目载入后改的，就替换那一条，不再新增。
+   返回 updated 已覆盖 / same 没有改动 / added / dup / builtin / empty */
+function saveCustomFromEditor(card, group, body, head, name) {
+  const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
+  if (!b.trim()) return 'empty';
+  const key = textKey(b);
+  if (!key) return 'empty';
+  if (builtinKeys(group)[key]) return 'builtin';
+  const arr = customsOf(card, group);
+  const at = (CUSTOM_EDIT_RAW && CUSTOM_EDIT_GROUP === group && CUSTOM_EDIT_CARD === card)
+    ? arr.findIndex(x => x.t === CUSTOM_EDIT_RAW) : -1;
+  if (at < 0) return addCustom(card, group, b, head, name);
+  const keep = group === '世设' ? (splitDocTag(arr[at].t, 'world').head || head) : '';
+  const text = group === '世设' ? wrapDocTag(keep, b) : b;
+  const nm = String(name == null ? '' : name).trim() || arr[at].n;
+  if (arr[at].t === text && arr[at].n === nm) return 'same';
+  if (arr.some((x, i) => i !== at && textKey(x.t) === key)) return 'dup';
+  arr[at] = { n: nm, t: text };
+  saveCustoms(card, group, arr);
+  clearCustomEdit();
+  return 'updated';
+}
+
+function plainItem(s) {
+  return String(s == null ? '' : s).replace(/^ +/, '').replace(/^[-*·]\s*/, '').trim();
+}
+
+/* 保存前给这条自定义条目起个默认名：
+   单条取它自己的标题，没有标题就用内容；
+   复合的话，大标题不是四个默认大标题之一就用大标题，否则用第一个最高层次标题。 */
+function defaultCustomName(text, head, composite) {
+  const body = splitDocTag(String(text == null ? '' : text), 'world').body || String(text == null ? '' : text);
+  const lines = body.split(/\r?\n/).filter(l => String(l).trim());
+  const first = lines.length ? plainItem(lines[0]) : '';
+  if (!composite) {
+    const nm = splitItem(first).title || splitHead(first) || '';
+    return (nm || first || shorten(body)).slice(0, 24);
+  }
+  const h = String(head || '').trim();
+  if (h && BLOCK_HEADS.indexOf(h) < 0) return h.slice(0, 24);
+  const pads = lines.map(l => (String(l).match(/^[ \t]*/) || [''])[0].length);
+  const minPad = Math.min.apply(null, pads);
+  const tops = lines.filter((l, i) => pads[i] === minPad);
+  for (const ln of tops) {
+    const p = plainItem(ln);
+    const nm = splitHead(p) || splitItem(p).title;
+    if (nm) return nm.slice(0, 24);
+  }
+  return (plainItem(tops[0] || '') || first || shorten(body)).slice(0, 24);
+}
+
+/* 命名弹窗：默认名已填好，确认才存。titles 是给用户看的标题，items 是待命名条目。 */
+function askName(title, init, onOk, onCancel) {
+  const panel = doc.getElementById('dg-eye-panel');
+  if (!panel) return;
+  closeConfirm();
+  const mask = doc.createElement('div');
+  mask.className = 'eye-mask';
+  mask.id = 'eye-mask';
+  mask.innerHTML =
+    '<div class="eye-dialog">' +
+      '<div class="eye-dlg-t">' + esc(title) + '</div>' +
+      '<div class="eye-dlg-lb">名称</div>' +
+      '<input class="eye-ren-input eye-dlg-input" maxlength="24" value="' + esc(init || '') + '">' +
+      '<div class="eye-dlg-btns">' +
+        '<span class="dg-eye-btn" data-no>取消</span>' +
+        '<span class="dg-eye-btn pri" data-yes>保存</span>' +
+      '</div>' +
+    '</div>';
+  panel.appendChild(mask);
+  const ip = mask.querySelector('.eye-dlg-input');
+  const no = () => { closeConfirm(); if (onCancel) onCancel(); };
+  const ok = () => {
+    const v = String(ip ? ip.value : '').replace(/\s+/g, ' ').trim();
+    closeConfirm();
+    if (onOk) onOk(v);
+  };
+  mask.querySelector('[data-no]').addEventListener('click', no);
+  mask.querySelector('[data-yes]').addEventListener('click', ok);
+  if (ip) {
+    ip.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); ok(); }
+      else if (e.key === 'Escape') { e.preventDefault(); no(); }
+    });
+    ip.focus(); ip.select();
+  }
+}
+
+/* 一次要存好几条时的命名弹窗：一行一条，逐条可改。 */
+function askNames(title, items, onOk, onCancel) {
+  const panel = doc.getElementById('dg-eye-panel');
+  if (!panel) return;
+  closeConfirm();
+  const mask = doc.createElement('div');
+  mask.className = 'eye-mask';
+  mask.id = 'eye-mask';
+  const rows = items.map((e, i) =>
+    '<div class="eye-name-row">' +
+      (e.brief ? '<div class="eye-name-sub">' + esc(e.brief) + '</div>' : '') +
+      '<input class="eye-ren-input eye-dlg-input" data-nm="' + i + '" maxlength="24" value="' + esc(e.n || '') + '">' +
+    '</div>'
+  ).join('');
+  mask.innerHTML =
+    '<div class="eye-dialog eye-dialog-wide">' +
+      '<div class="eye-dlg-t">' + esc(title) + '</div>' +
+      '<div class="eye-dlg-lb">以下 ' + items.length + ' 条将保存为自定义条目，名称可以逐个修改</div>' +
+      '<div class="eye-name-list">' + rows + '</div>' +
+      '<div class="eye-dlg-btns">' +
+        '<span class="dg-eye-btn" data-no>取消</span>' +
+        '<span class="dg-eye-btn pri" data-yes>保存</span>' +
+      '</div>' +
+    '</div>';
+  panel.appendChild(mask);
+  const collect = () => items.map((e, i) => {
+    const ip = mask.querySelector('[data-nm="' + i + '"]');
+    return String(ip ? ip.value : '').replace(/\s+/g, ' ').trim() || e.n;
+  });
+  const no = () => { closeConfirm(); if (onCancel) onCancel(); };
+  const ok = () => { const v = collect(); closeConfirm(); if (onOk) onOk(v); };
+  mask.querySelector('[data-no]').addEventListener('click', no);
+  mask.querySelector('[data-yes]').addEventListener('click', ok);
+  const first = mask.querySelector('.eye-dlg-input');
+  if (first) { first.focus(); first.select(); }
+}
+
+function subtreeText(flat, idx) {
+  const node = (flat || [])[idx];
+  if (!node) return '';
+  const base = itemDepth(node.raw);
+  const out = [plainItem(node.raw)];
+  for (let i = idx + 1; i < flat.length; i++) {
+    const it = flat[i];
+    if (it.head !== node.head) break;
+    const d = itemDepth(it.raw);
+    if (d <= base) break;
+    out.push(padItem(d - base, plainItem(it.raw)));
+  }
+  return out.join('\n');
+}
+
+/* 把整块内容存成一条自定义条目，名字默认就是块名 */
+function saveBlockCustom(head) {
+  const flat = LAST_FLAT;
+  const card = currentCharName();
+  if (!card) { tip('取不到当前角色卡名', true); return; }
+  const blk = String(head || '').trim();
+  const body = flat.map(x => x.raw).join('\n');
+  const r0 = customBlock(card, '世设', body);
+  if (r0 === 'empty') { tip(EMPTY_MSG, true); return; }
+  if (r0 === 'builtin') { tip(BUILTIN_MSG['世设']); return; }
+  if (r0 === 'dup') { tip(dupMsg('世设')); return; }
+  const dft = blk || defaultCustomName(body, blk, true);
+  askName('保存为自定义世设', dft, name => {
+    const nm = name || dft;
+    const r = addCustom(card, '世设', body, blk, nm);
+    if (r === 'builtin') { tip(BUILTIN_MSG['世设']); return; }
+    if (r === 'dup') { tip(dupMsg('世设')); return; }
+    const box = doc.getElementById('eye-chips-set') || doc.getElementById('eye-chips');
+    const fold = box && box.closest ? box.closest('.eye-fold') : null;
+    if (fold) fold.classList.add('open');
+    renderCustomChips();
+    tip('已保存为自定义世设：' + nm);
+  }, () => tip('已取消，未保存'));
+}
+
+/* 改大标题：把整块的标签换成新名字 */
+function askRenameBlock(head) {
+  const card = currentCharName();
+  if (!card) { tip('取不到当前角色卡名', true); return; }
+  askInput('修改大标题', head, async v => {
+    if (BUSY) return;
+    const nm = String(v || '').trim();
+    if (!nm) { tip('大标题不能为空', true); return; }
+    if (nm === head) return;
+    BUSY = true;
+    try {
+      const cur = await loadList(card, 'world');
+      const same = (cur.blocks || []).filter(b => b.head === nm).length;
+      if (same) { tip('已有同名的大标题：' + nm, true); return; }
+      await rewriteBlocks(card, 'world', blocks => blocks.map(b => (b.head === head ? { head: nm, items: b.items } : b)));
+      if (String(WORLD_HEAD || '').trim() === head) WORLD_HEAD = nm;
+      await renderPanel();
+      tip('大标题已改为：' + nm);
+    } catch (e) {
+      tip('修改失败：' + (e && e.message ? e.message : e), true);
+    } finally {
+      BUSY = false;
+    }
+  });
+}
+
+/* 删大标题：整块连同其中的内容一起删掉 */
+function askDeleteBlock(head, cnt) {
+  const card = currentCharName();
+  if (!card) { tip('取不到当前角色卡名', true); return; }
+  askConfirm('删除大标题',
+    '将删除「' + head + '」这一整块，其中 ' + cnt + ' 条内容会一起删除，原有内容将无法恢复。',
+    '确认删除', async () => {
+      if (BUSY) return;
+      BUSY = true;
+      try {
+        await rewriteBlocks(card, 'world', blocks => blocks.filter(b => b.head !== head));
+        if (String(WORLD_HEAD || '').trim() === head) WORLD_HEAD = '';
+        await renderPanel();
+        tip('已删除大标题：' + head);
+      } catch (e) {
+        tip('删除失败：' + (e && e.message ? e.message : e), true);
+      } finally {
+        BUSY = false;
+      }
+    });
+}
+
+function saveRowCustom(idx) {
+  const flat = LAST_FLAT;
+  const node = flat[idx];
+  if (!node) return;
+  const card = currentCharName();
+  if (!card) { tip('取不到当前角色卡名', true); return; }
+  const body = subtreeText(flat, idx);
+  const r0 = customBlock(card, '世设', body);
+  if (r0 === 'empty') { tip(EMPTY_MSG, true); return; }
+  if (r0 === 'builtin') { tip(BUILTIN_MSG['世设']); return; }
+  if (r0 === 'dup') { tip(dupMsg('世设')); return; }
+  const head = node.head || blockHeadOf('world');
+  const dft = defaultCustomName(body, head, true);
+  askName('保存为自定义世设', dft, name => {
+    const nm = name || dft;
+    const r = addCustom(card, '世设', body, head, nm);
+    if (r === 'builtin') { tip(BUILTIN_MSG['世设']); return; }
+    if (r === 'dup') { tip(dupMsg('世设')); return; }
+    const box = doc.getElementById('eye-chips-set') || doc.getElementById('eye-chips');
+    const fold = box && box.closest ? box.closest('.eye-fold') : null;
+    if (fold) fold.classList.add('open');
+    renderCustomChips();
+    tip('已保存为自定义世设：' + nm);
+  }, () => tip('已取消，未保存'));
+}
+
+/* 先把这次粘贴会新增哪些自定义条目算出来，不改动任何东西；命名弹窗按这个列表走 */
+function planPastedCustoms(card, blocks) {
+  const out = { items: [], dup: 0, built: 0 };
+  const seen = {};
+  for (const b of (blocks || [])) {
+    const bh = String(b.head == null ? '' : b.head).trim();
+    /* 大标题有区分度时整块算一条，名字就是大标题；四个默认大标题才按顶层条目切开 */
+    const whole = !!bh && BLOCK_HEADS.indexOf(bh) < 0;
+    for (const c of (whole ? [b.items] : topChunks(b.items))) {
+      const body = c.join('\n');
+      if (!String(body).trim()) continue;
+      const key = textKey(body);
+      if (!key || seen[key]) continue;
+      const r = customBlock(card, '世设', body);
+      if (r === 'builtin') { out.built++; continue; }
+      if (r === 'dup') { out.dup++; continue; }
+      if (r === 'empty') continue;
+      seen[key] = 1;
+      const head0 = plainItem(String(body).split('\n')[0]);
+      out.items.push({
+        body: body,
+        head: bh,
+        n: defaultCustomName(body, bh, true),
+        brief: whole ? '' : (splitItem(head0).title || splitHead(head0) || head0 || '').slice(0, 20),
+      });
+    }
+  }
+  return out;
+}
+
+function savePastedCustoms(card, plan, names) {
+  const out = { added: 0, dup: plan ? plan.dup : 0, built: plan ? plan.built : 0 };
+  (plan ? plan.items : []).forEach((it, i) => {
+    const nm = names ? (names[i] || it.n) : it.n;
+    const r = addCustom(card, '世设', it.body, it.head, nm);
+    if (r === 'added') out.added++;
+    else if (r === 'builtin') out.built++;
+    else if (r === 'dup') out.dup++;
+  });
+  return out;
+}
+
+function askMerge(msg, onAppend, onReplace, canCover) {
+  const panel = doc.getElementById('dg-eye-panel');
+  if (!panel) return;
+  closeConfirm();
+  const mask = doc.createElement('div');
+  mask.className = 'eye-mask';
+  mask.id = 'eye-mask';
+  mask.innerHTML =
+    '<div class="eye-dialog">' +
+      '<div class="eye-dlg-t">导入内容与已保存内容存在重复</div>' +
+      '<div class="eye-dlg-m">' + esc(msg).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>') + '</div>' +
+      '<div class="eye-dlg-btns">' +
+        '<span class="dg-eye-btn" data-no>取消</span>' +
+        '<span class="dg-eye-btn pri" data-add>追加</span>' +
+        (canCover ? '<span class="dg-eye-btn danger" data-rep>覆盖</span>' : '') +
+      '</div>' +
+    '</div>';
+  panel.appendChild(mask);
+  mask.querySelector('[data-no]').addEventListener('click', () => { closeConfirm(); tip('已取消，未做任何改动'); });
+  mask.querySelector('[data-add]').addEventListener('click', () => { closeConfirm(); if (onAppend) onAppend(); });
+  const rep = mask.querySelector('[data-rep]');
+  if (rep) rep.addEventListener('click', () => { closeConfirm(); if (onReplace) onReplace(); });
 }
 
 function cmdGroup() { return PANEL_VIEW === 'world' ? setGroup() : '指令'; }
@@ -3438,12 +4117,15 @@ function renderCustomChips() {
 function persistChipOrder() {
   const box = chipsBox();
   if (!box) return;
-  const arr = [];
+  const arr = customsOf(currentCharName(), chipGroup());
+  const out = [];
   box.querySelectorAll('.eye-chip').forEach(c => {
     const t = c.getAttribute('data-text');
-    if (t != null) arr.push(t);
+    const e = t == null ? null : arr.filter(x => x.t === t)[0];
+    if (e && out.indexOf(e) < 0) out.push(e);
   });
-  saveCustoms(currentCharName(), chipGroup(), arr);
+  if (out.length !== arr.length) return;
+  saveCustoms(currentCharName(), chipGroup(), out);
 }
 
 function customText() {
@@ -3455,65 +4137,87 @@ function customText() {
   return joinItem(ti ? ti.value : '', inp.value);
 }
 
+/* 保存自定义的统一流程：先查重复，再弹命名窗，确认了才落盘 */
+function saveCustomFlow(card, group, txt, head, composite) {
+  const key = textKey(txt);
+  if (!key) { tip(EMPTY_MSG, true); return; }
+  if (builtinKeys(group)[key]) { tip(BUILTIN_MSG[group] || '本条目与默认条目重复'); return; }
+  const arr = customsOf(card, group);
+  const editing = !!(CUSTOM_EDIT_RAW && CUSTOM_EDIT_GROUP === group && CUSTOM_EDIT_CARD === card);
+  const at = editing ? arr.findIndex(x => x.t === CUSTOM_EDIT_RAW) : -1;
+  if (arr.some((x, i) => i !== at && textKey(x.t) === key)) { tip(dupMsg(group)); return; }
+  const dft = (at >= 0 && arr[at].n) ? arr[at].n : defaultCustomName(txt, head, composite);
+  askName('保存为自定义' + group, dft, name => {
+    const nm = name || dft;
+    const r = saveCustomFromEditor(card, group, txt, head, nm);
+    if (r === 'builtin') { tip(BUILTIN_MSG[group] || '本条目与默认条目重复'); return; }
+    if (r === 'dup') { tip(dupMsg(group)); return; }
+    if (r === 'same') { tip('未修改内容，无法重复保存'); return; }
+    clearCustomEdit();
+    const box = chipsBox();
+    const fold = box && box.closest ? box.closest('.eye-fold') : null;
+    if (fold) fold.classList.add('open');
+    renderCustomChips();
+    tip(r === 'updated' ? '已更新这条自定义条目' : '已保存为自定义' + group + '：' + nm);
+  }, () => tip('已取消，未保存'));
+}
+
 function doSaveCustom() {
   const txt = customText().replace(/\s*\r?\n\s*/g, ' ').trim();
-  if (!txt) { tip('先写内容再保存', true); return; }
+  if (!txt) { tip(EMPTY_MSG, true); return; }
   const card = currentCharName();
   if (!card) { tip('取不到当前角色卡名', true); return; }
   const group = chipGroup();
-  const arr = customsOf(card, group);
-  if (arr.indexOf(txt) >= 0) { tip('这条已经保存过了'); return; }
-  arr.push(txt);
-  saveCustoms(card, group, arr);
-  const box = chipsBox();
-  const fold = box && box.closest ? box.closest('.eye-fold') : null;
-  if (fold) fold.classList.add('open');
-  renderCustomChips();
-  tip('已保存到「自定义' + group + '」');
+  saveCustomFlow(card, group, txt, group === '世设' ? blockHeadOf('world') : '', false);
 }
 
 function compSaveCustom() {
   compSync();
   const txt = compRaws().join('\n').trim();
-  if (!txt) { tip('还没有填内容', true); return; }
+  if (!txt) { tip(EMPTY_MSG, true); return; }
   const card = currentCharName();
   if (!card) { tip('取不到当前角色卡名', true); return; }
   const group = COMP_KIND === 'pers' ? '人设' : '世设';
-  const arr = customsOf(card, group);
-  if (arr.indexOf(txt) >= 0) { tip('这条已经保存过了'); return; }
-  arr.push(txt);
-  saveCustoms(card, group, arr);
-  const box = chipsBox();
-  const fold = box && box.closest ? box.closest('.eye-fold') : null;
-  if (fold) fold.classList.add('open');
-  renderCustomChips();
-  tip('已保存到「自定义' + group + '」');
+  const head = group === '世设' ? (COMP_BLOCK || blockHeadOf('world')) : '';
+  saveCustomFlow(card, group, txt, head, true);
 }
 
-function fillCustom(raw) {
+function fillCustom(raw, note) {
   const ta = doc.getElementById('eye-cmd');
-  if (ta) { ta.value = raw; ta.focus(); return; }
-  if (raw.indexOf('\n') >= 0) {
-    const p = compParse(raw);
+  if (ta) { ta.value = raw; ta.focus(); if (note) tip(note); return; }
+  const tg = splitDocTag(raw, 'world');
+  const body = tg.body || String(raw == null ? '' : raw);
+  const head = String(tg.head || '').trim();
+  const shift = !!(head && head !== String(WORLD_HEAD || '').trim());
+  if (shift) WORLD_HEAD = head;
+  if (body.indexOf('\n') >= 0) {
+    const p = compParse(body);
     COMP_KIND = SET_TAB === 'pers' ? 'pers' : 'world';
     COMP_EDIT = '';
     COMP_IDX = -1;
     COMP_BLOCK = '';
     COMP_HEAD = COMP_KIND === 'pers' ? (MON_SEL || '') : (p.head || '');
     COMP_ROWS = p.rows.length ? p.rows : [{ t: '', x: '', d: 1 }];
+    COMP_CUR = -1;
     COMP_OPEN = true;
-    renderPanel().then(compScroll, compScroll);
+    const done = () => { compScroll(); if (note) tip(note); };
+    renderPanel().then(done, done);
     return;
   }
-  const ti = doc.getElementById('eye-new-t');
-  const inp = doc.getElementById('eye-new');
-  const it = splitItem(raw);
-  const hd = it.title ? '' : splitHead(raw);
-  if (ti) ti.value = it.title || hd || '';
-  if (inp) {
-    inp.value = it.title ? it.text : (hd ? '' : raw);
-    inp.focus();
-  }
+  const it = splitItem(body);
+  const hd = it.title ? '' : splitHead(body);
+  const fill = () => {
+    const ti = doc.getElementById('eye-new-t');
+    const inp = doc.getElementById('eye-new');
+    if (ti) ti.value = it.title || hd || '';
+    if (inp) {
+      inp.value = it.title ? it.text : (hd ? '' : body);
+      inp.focus();
+    }
+    if (note) tip(note);
+  };
+  if (shift) { renderPanel().then(fill, fill); return; }
+  fill();
 }
 
 const HELP_PANES = {
@@ -3588,6 +4292,8 @@ function viewSetHtml(wb) {
       '<div class="eye-sec-h"><span class="eye-sec-t">显示</span></div>' +
       row('eye-detach', '菜单分离', '面板不再跟随悬浮球，可拖到任意位置', detachOn()) +
       row('eye-simpleanim', '简化动画', '简化六芒星菜单动画，并使其更快响应', simpleAnimOn()) +
+      '<div class="eye-sec-h"><span class="eye-sec-t">其他</span></div>' +
+      row('eye-cover', '覆盖设定', '导入重复的设定时，可整块覆盖旧有内容', coverOn()) +
       '<div class="dg-eye-msg"></div>' +
     '</section>';
 }
@@ -3635,6 +4341,7 @@ const IC_X = svgIcon('M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6
 const IC_PLUS = svgIcon('M10.5 4.5h3v6h6v3h-6v6h-3v-6h-6v-3h6z');
 const IC_MINUS = svgIcon('M4.5 10.5h15v3h-15z');
 const IC_SEND = svgIcon('M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.58L20 12l-8-8-8 8z');
+const IC_BOOK = svgIcon('M6 3h12c.55 0 1 .45 1 1v17l-7-4-7 4V4c0-.55.45-1 1-1z');
 
 const PIN_KEY = 'dg_eye_pin';
 function pinMap() {
@@ -3935,8 +4642,8 @@ async function doRename(oldName, rawNew, kind) {
   try {
     const final = await renameTarget(card, oldName, name, kind);
     if (kind === 'mon' && MON_SEL === oldName) MON_SEL = final;
-    tip('已更名为：' + final);
     await renderPanel();
+    tip('已更名为：' + final);
   } catch (e) {
     tip('更名失败：' + (e && e.message ? e.message : e), true);
   } finally {
@@ -3983,10 +4690,10 @@ function bindPanel() {
     BUSY = true; addBtn.style.opacity = '.45';
     try {
       const final = await addTarget(card, name, kind);
-      tip('已加入' + (isWorld ? '世设' : isPers ? '人设' : '监视') + '：' + final);
       if (inp) inp.value = '';
       if (isWorld && tin) tin.value = '';
       await renderPanel();
+      tip('已加入' + (isWorld ? '世设' : isPers ? '人设' : '监视') + '：' + final);
     } catch (e) {
       tip('加入失败：' + (e && e.message ? e.message : e), true);
     } finally {
@@ -3995,34 +4702,85 @@ function bindPanel() {
   };
   if (addBtn) addBtn.addEventListener('click', doAdd);
 
-  const doImport = async text => {
+  const doImport = (text, mode, noted) => {
     if (BUSY) { tip('正在处理上一步，稍候再点', true); return; }
     const blocks = parsePasteDoc(text, 'world');
     if (!blocks.length) { tip('没有识别到可用的设定内容', true); return; }
     const card = currentCharName();
     if (!card) { tip('取不到当前角色卡名，无法分组', true); return; }
-    BUSY = true; if (addBtn) addBtn.style.opacity = '.45';
-    try {
-      await importDocBlocks(card, blocks, 'world');
-      WORLD_HEAD = blocks[0].head;
-      if (inp) inp.value = '';
-      const tin = d.getElementById('eye-new-t');
-      if (tin) tin.value = '';
-      tip('已加入世设：' + blocks.map(b => b.head).join('、'));
-      await renderPanel();
-    } catch (e) {
-      tip('加入失败：' + (e && e.message ? e.message : e), true);
-    } finally {
-      BUSY = false; if (addBtn) addBtn.style.opacity = '';
+    const plan = planPastedCustoms(card, blocks);
+    const run = async names => {
+      BUSY = true; if (addBtn) addBtn.style.opacity = '.45';
+      try {
+        MERGE_SKIPPED = 0;
+        await importDocBlocks(card, blocks, 'world', mode);
+        const saved = savePastedCustoms(card, plan, names);
+        WORLD_HEAD = blocks[0].head;
+        if (inp) inp.value = '';
+        const tin = d.getElementById('eye-new-t');
+        if (tin) tin.value = '';
+        const parts = ['已加入世设：' + blocks.map(b => b.head).join('、') +
+          (noted ? (mode === 'append' ? '（追加）' : '（覆盖）') : '')];
+        if (saved.added) parts.push('已保存为自定义世设 ' + saved.added + ' 条');
+        if (saved.dup) parts.push(saved.dup + ' 条已存在');
+        if (saved.built) parts.push(saved.built + ' 条与内置重复');
+        if (MERGE_SKIPPED) parts.push('跳过 ' + MERGE_SKIPPED + ' 条重复');
+        await renderPanel();
+        tip(parts.join('；'));
+      } catch (e) {
+        tip('加入失败：' + (e && e.message ? e.message : e), true);
+      } finally {
+        BUSY = false; if (addBtn) addBtn.style.opacity = '';
+      }
+    };
+    if (plan.items.length === 1) {
+      const one = plan.items[0];
+      askName('保存为自定义世设', one.n, nm => { run([nm || one.n]); }, () => tip('已取消，未保存'));
+      return;
     }
+    if (plan.items.length) {
+      askNames('保存为自定义世设', plan.items, names => { run(names); }, () => tip('已取消，未保存'));
+      return;
+    }
+    run(null);
   };
+
+  const beginImport = async text => {
+    if (BUSY) { tip('正在处理上一步，稍候再点', true); return; }
+    const blocks = parsePasteDoc(text, 'world');
+    if (!blocks.length) { tip('没有识别到可用的设定内容', true); return; }
+    const card = currentCharName();
+    if (!card) { tip('取不到当前角色卡名，无法分组', true); return; }
+    let hits = [];
+    let heads = [];
+    try {
+      const cur = await loadList(card, 'world');
+      blocks.forEach(b => {
+        const f = findBlock(cur.blocks, b.head);
+        if (f && (f.items || []).length) {
+          heads.push(b.head);
+          hits.push('「' + b.head + '」下已保存 ' + topChunks(f.items).length + ' 条，本次导入 ' + topChunks(b.items).length + ' 条');
+        }
+      });
+    } catch (e) { hits = []; heads = []; }
+    if (!hits.length) { doImport(text, 'append', false); return; }
+    const cover = coverOn();
+    askMerge(hits.join('；') + '。选择「追加」将保留原有内容，把导入的非重复内容接续在原有内容之后；' +
+        (cover
+          ? '选择「覆盖」将从顶层整块覆盖' + heads.map(h => '「' + h + '」').join('、') + '，原有内容将**无法恢复**。'
+          : '重复的内容会跳过。'),
+      () => doImport(text, 'append', true),
+      () => doImport(text, 'replace', true),
+      cover);
+  };
+
   if (inp && isWorld) {
     inp.addEventListener('paste', e => {
       const cd = e.clipboardData;
       const txt = cd && cd.getData ? cd.getData('text') : '';
       if (!txt || !looksLikeDoc(txt)) return;
       e.preventDefault();
-      doImport(txt);
+      beginImport(txt);
     });
   }
   if (inp) {
@@ -4043,7 +4801,9 @@ function bindPanel() {
     COMP_BLOCK = '';
     COMP_HEAD = '';
     COMP_ROWS = [{ t: '', x: '', d: 1 }];
+    COMP_CUR = -1;
     COMP_OPEN = true;
+    clearCustomEdit();
     renderPanel().then(compScroll, compScroll);
   });
 
@@ -4051,27 +4811,38 @@ function bindPanel() {
     const head = d.getElementById('eye-comp-t');
     if (head) {
       head.addEventListener('input', () => { COMP_HEAD = head.value; });
+      /* 光标停在「条目标题」时没有行内焦点，加行以条目标题为基准 */
+      head.addEventListener('focusin', () => { COMP_CUR = -2; });
       head.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); compSave(); }
         else if (e.key === 'Escape') { e.preventDefault(); compCancel(); }
       });
     }
     const rowBox = d.getElementById('eye-comp-rows');
+    if (rowBox) rowBox.addEventListener('focusin', e => {
+      const row = e.target && e.target.closest ? e.target.closest('.eye-comp-row') : null;
+      if (row) compSetCur(row.getAttribute('data-i'));
+    });
     if (rowBox) rowBox.addEventListener('click', e => {
       const del = e.target && e.target.closest ? e.target.closest('[data-cdel]') : null;
-      if (!del) return;
+      const row = e.target && e.target.closest ? e.target.closest('.eye-comp-row') : null;
+      if (!del) {
+        if (row) compSetCur(row.getAttribute('data-i'));
+        return;
+      }
       compSync();
       const i = parseInt(del.getAttribute('data-cdel'), 10);
       if (i >= 0) COMP_ROWS.splice(i, 1);
+      if (COMP_CUR === i) COMP_CUR = Math.min(i, COMP_ROWS.length - 1);
+      else if (COMP_CUR > i) COMP_CUR--;
+      if (!COMP_ROWS.length) COMP_CUR = -1;
       compRepaint();
     });
     const pushRow = deeper => {
       compSync();
-      const last = COMP_ROWS.length ? COMP_ROWS[COMP_ROWS.length - 1] : null;
-      const lv = last ? (deeper ? last.d + 1 : last.d) : 1;
-      COMP_ROWS.push({ t: '', x: '', d: lv });
+      const at = compInsertRow(deeper);
       compRepaint();
-      compFocusRow(COMP_ROWS.length - 1);
+      compFocusRow(at);
     };
     const sibBtn = d.getElementById('eye-comp-sib');
     if (sibBtn) sibBtn.addEventListener('click', () => pushRow(false));
@@ -4142,8 +4913,8 @@ function bindPanel() {
           if (!ok) { tip('没找到这一条，可能已被改动，关掉重开面板试试', true); return; }
           if (isMon && MON_SEL === nm) MON_SEL = null;
           MON_PAGE = 1;
-          tip(isMon ? '已移出监视' : '已删除');
           await renderPanel();
+          tip(isMon ? '已移出监视' : '已删除');
         } catch (e) {
           tip((isMon ? '移出失败：' : '删除失败：') + (e && e.message ? e.message : e), true);
         } finally { BUSY = false; }
@@ -4156,6 +4927,7 @@ function bindPanel() {
       const t = el.getAttribute('data-stab');
       if (!t || t === SET_TAB) return;
       SET_TAB = t;
+      clearCustomEdit();
       MON_PAGE = 1;
       renderPanel();
     });
@@ -4232,9 +5004,52 @@ function bindPanel() {
   const saveBtn = d.getElementById('eye-save');
   if (saveBtn) saveBtn.addEventListener('click', doSaveCustom);
 
+  d.querySelectorAll('#dg-eye-panel [data-bmk]').forEach(el => {
+    el.addEventListener('click', () => {
+      saveRowCustom(parseInt(el.getAttribute('data-bmk'), 10));
+    });
+  });
   d.querySelectorAll('#dg-eye-panel [data-snd]').forEach(el => {
     el.addEventListener('click', () => {
       doSendSetting(el.getAttribute('data-snd'));
+    });
+  });
+  d.querySelectorAll('#dg-eye-panel [data-bbmk]').forEach(el => {
+    el.addEventListener('click', () => {
+      saveBlockCustom(el.getAttribute('data-bbmk'));
+    });
+  });
+  d.querySelectorAll('#dg-eye-panel [data-bsnd]').forEach(el => {
+    el.addEventListener('click', () => {
+      doSendSetting(LAST_FLAT.map(x => x.raw).join('\n'));
+    });
+  });
+  d.querySelectorAll('#dg-eye-panel [data-bpen]').forEach(el => {
+    el.addEventListener('click', () => {
+      askRenameBlock(el.getAttribute('data-bpen'));
+    });
+  });
+  d.querySelectorAll('#dg-eye-panel [data-bx]').forEach(el => {
+    el.addEventListener('click', () => {
+      askDeleteBlock(el.getAttribute('data-bx'), parseInt(el.getAttribute('data-bcnt'), 10) || 0);
+    });
+  });
+  d.querySelectorAll('#dg-eye-panel [data-btog]').forEach(el => {
+    el.addEventListener('click', () => {
+      const node = el.closest ? el.closest('.eye-broot') : null;
+      const box = node ? node.nextElementSibling : null;
+      if (!box || !box.classList || !box.classList.contains('eye-kids')) return;
+      const nmEl = node.querySelector('[data-blk]');
+      const blk = nmEl ? nmEl.getAttribute('data-blk') : '';
+      if (box.getAttribute('data-shut') === '1') {
+        box.removeAttribute('data-shut');
+        el.classList.add('on');
+        if (blk) delete BLOCK_SHUT[blk];
+      } else {
+        box.setAttribute('data-shut', '1');
+        el.classList.remove('on');
+        if (blk) BLOCK_SHUT[blk] = true;
+      }
     });
   });
   d.querySelectorAll('#dg-eye-panel .eye-fold-hd').forEach(el => {
@@ -4257,8 +5072,8 @@ function bindPanel() {
       try {
         await switchSlot(card, kind, nm);
         MON_PAGE = 1;
-        tip('已切换到「' + nm + '」');
         await renderPanel();
+        tip('已切换到「' + nm + '」');
       } catch (e) {
         tip('切换失败：' + (e && e.message ? e.message : e), true);
       } finally { BUSY = false; }
@@ -4279,8 +5094,8 @@ function bindPanel() {
       BUSY = true;
       try {
         const done = await renameSlot(nm, want, kind);
-        tip('词条序号已改为：' + done);
         await renderPanel();
+        tip('词条序号已改为：' + done);
       } catch (e) {
         tip('更名失败：' + (e && e.message ? e.message : e), true);
       } finally { BUSY = false; }
@@ -4297,8 +5112,8 @@ function bindPanel() {
       try {
         await deleteSlot(currentCharName(), nm, kind);
         MON_PAGE = 1;
-        tip('已删除词条：' + nm);
         await renderPanel();
+        tip('已删除词条：' + nm);
       } catch (e) {
         tip('删除失败：' + (e && e.message ? e.message : e), true);
       } finally { BUSY = false; }
@@ -4315,9 +5130,9 @@ function bindPanel() {
       const made = await newSlot(card, kind, '');
       if (isMon) MON_SEL = null;
       MON_PAGE = 1;
+      await renderPanel();
       tip(isMon ? ('已新建空白名单：' + made.label)
         : ('已新建空白' + (isWorld ? '世设' : '人设') + '词条：' + made.label));
-      await renderPanel();
     } catch (e) {
       tip('新建失败：' + (e && e.message ? e.message : e), true);
     } finally { BUSY = false; }
@@ -4421,6 +5236,9 @@ function bindPanel() {
   });
   bindSwitch('eye-boost', () => {
     writeLS(BOOST_KEY, boostOn() ? '0' : '1');
+  });
+  bindSwitch('eye-cover', () => {
+    writeLS(COVER_KEY, coverOn() ? '0' : '1');
   });
   bindSwitch('eye-simpleanim', () => {
     writeLS(SIMPLE_KEY, simpleAnimOn() ? '0' : '1');
@@ -4549,7 +5367,8 @@ function bindChips(panel) {
       const group = chipGroup();
       askConfirm('删除自定义' + group, '确定删除这条内容？「' + t + '」', '确认删除', () => {
         const card = currentCharName();
-        saveCustoms(card, group, customsOf(card, group).filter(x => x !== t));
+        saveCustoms(card, group, customsOf(card, group).filter(x => x.t !== t));
+        if (CUSTOM_EDIT_RAW === t && CUSTOM_EDIT_GROUP === group && CUSTOM_EDIT_CARD === card) clearCustomEdit();
         setEdit(null);
         renderCustomChips();
         tip('已删除');
@@ -4559,7 +5378,12 @@ function bindChips(panel) {
     if (swallowClick) { swallowClick = false; return; }
     const chip = chipOf(e);
     if (!chip || chip === editEl) return;
-    fillCustom(chip.getAttribute('data-text') || '');
+    const t = chip.getAttribute('data-text') || '';
+    CUSTOM_EDIT_RAW = t;
+    CUSTOM_EDIT_GROUP = chipGroup();
+    CUSTOM_EDIT_CARD = currentCharName();
+    const cur = customsOf(currentCharName(), chipGroup()).filter(x => x.t === t)[0];
+    fillCustom(t, loadedMsg(chipGroup(), (cur && cur.n) || chipTitle(t)));
   });
 
   bd.addEventListener('dblclick', e => {
@@ -4581,6 +5405,7 @@ function bindPresets(panel) {
     const t = tab.getAttribute('data-tab');
     if (!t || t === CMD_TAB) return;
     CMD_TAB = t;
+    clearCustomEdit();
     bd.querySelectorAll('.eye-tab[data-tab]').forEach(x => {
       x.classList.toggle('on', x.getAttribute('data-tab') === t);
     });
@@ -4614,6 +5439,7 @@ function bindPresets(panel) {
       COMP_BLOCK = '';
       COMP_HEAD = COMP_KIND === 'pers' ? (MON_SEL || '') : (p.head || chip.getAttribute('data-wpt') || '');
       COMP_ROWS = p.rows.length ? p.rows : [{ t: '', x: '', d: 1 }];
+      COMP_CUR = -1;
       COMP_OPEN = true;
       renderPanel().then(() => {
         const f = doc.querySelector('.eye-fold[data-fold="wpreset"], .eye-fold[data-fold="pperset"]');
