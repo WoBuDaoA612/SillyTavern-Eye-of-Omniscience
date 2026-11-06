@@ -989,7 +989,11 @@
     background:var(--eye-card); border:1px solid var(--eye-edge); border-radius:var(--r-card);
     box-shadow:var(--sh-card);
   }
-  .eye-swrow .n{ flex:1; min-width:0; }
+  .eye-swrow .n{
+    flex:1; min-width:0;
+  }
+  .eye-swrow.dim{ opacity:.45; filter:grayscale(1); }
+  .eye-swrow.dim .eye-sw{ cursor:not-allowed; }
   .eye-swrow .n b{
     display:block; font-family:var(--f-title); font-size:14px; font-weight:600;
     color:var(--eye-ink); letter-spacing:.06em; margin-bottom:4px;

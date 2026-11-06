@@ -1309,13 +1309,40 @@ function powerOn(list) {
 }
 
 /* ---------- 输入强化 ----------
-   只在发给 AI 的那一份里给用户这句话加前缀，聊天记录与输入框都不动。
-   chat 模式改 CHAT_COMPLETION_PROMPT_READY 的 messages，
-   text 模式改 GENERATE_AFTER_COMBINE_PROMPTS 的 prompt 串。 */
-const BOOST_TEXT = '<!--全视之眼最高权限系统已激活-->';
+   只在发给 AI 的那一份里给用户输入加前缀，聊天记录与输入框都不动。
+   主路径：manifest 的 generate_interceptor，在酒馆组装提示词之前改 coreChat
+   里的用户消息本身，标记贴在用户那句话前面，与预设怎么写无关。
+   备用：chat 模式 CHAT_COMPLETION_PROMPT_READY 的 messages，
+   text 模式 GENERATE_AFTER_COMBINE_PROMPTS 的 prompt 串。
+   标记内容按功能开关生成：监控写入 <实时监控>，设定写入 <设定修正>。
+   监控与设定都没开、或全视之眼整体关闭时，输入强化不可用，不写入任何标记。 */
+const BOOST_HEAD = '<!--全视之眼最高权限系统已激活: ';
+const BOOST_TAIL = '-->';
 
 function boostOn() {
   return readLS(BOOST_KEY) === '1';
+}
+
+function boostParts() {
+  const m = modsMap();
+  const list = [];
+  if (m.mon) list.push('强制应用<实时监控>规则，读取"监控名单"');
+  if (m.set) list.push('强制应用<设定修正>规则，读取当前相关的"世设补充修正"与"人设补充修正"');
+  return list;
+}
+
+function boostAble() {
+  return boostParts().length > 0 && readLS(MASTER_KEY) !== '0';
+}
+
+function boostActive() {
+  return boostOn() && boostAble();
+}
+
+function boostText() {
+  const list = boostParts();
+  if (!list.length) return '';
+  return BOOST_HEAD + list.join('；') + BOOST_TAIL;
 }
 
 function coverOn() {
@@ -1323,23 +1350,96 @@ function coverOn() {
 }
 
 function eyeBoostHit(s) {
-  return String(s == null ? '' : s).indexOf(BOOST_TEXT) >= 0;
+  return String(s == null ? '' : s).indexOf(BOOST_HEAD) >= 0;
 }
 
+function eyeBoostChatHit(m, mes) {
+  const c = m.content;
+  if (typeof c === 'string') return c.trim() && c.indexOf(mes) >= 0;
+  if (Array.isArray(c)) return c.some(p => p && typeof p.text === 'string' && p.text.indexOf(mes) >= 0);
+  return false;
+}
+
+/* 插到用户打的那句话前面。预设可以在消息外面再套一层标签，也可以什么都不套 ——
+   这里只认用户自己写的字，不认任何标签：
+   有标签时标记落在标签里紧贴原话，没有标签时它就是这条消息的第一行。
+   原话被预设改写掉、找不到了，退成整条消息的第一行，标记不会丢。 */
+function eyeBoostRaw() {
+  const ctx = getCtx();
+  const hist = ctx && Array.isArray(ctx.chat) ? ctx.chat : [];
+  for (let k = hist.length - 1; k >= 0; k--) {
+    const h = hist[k];
+    if (!h || h.is_user !== true) continue;
+    const raw = String(h.mes == null ? '' : h.mes).replace(/\s+$/, '');
+    return raw.trim() ? raw : '';
+  }
+  return '';
+}
+
+function eyeBoostInsert(text) {
+  const tag = boostText();
+  if (!tag) return text;
+  const raw = eyeBoostRaw();
+  if (raw) {
+    const at = text.indexOf(raw);
+    if (at >= 0) return text.slice(0, at) + tag + '\n' + text.slice(at);
+  }
+  return tag + '\n' + text;
+}
+
+function eyeBoostChatMark(m) {
+  const c = m.content;
+  if (typeof c === 'string') {
+    m.content = eyeBoostInsert(c);
+    return true;
+  }
+  if (Array.isArray(c)) {
+    const raw = eyeBoostRaw();
+    const hit = raw ? c.find(p => p && typeof p.text === 'string' && p.text.indexOf(raw) >= 0) : null;
+    const p = hit || c.find(x => x && typeof x.text === 'string' && x.text.trim());
+    if (!p) return false;
+    p.text = eyeBoostInsert(p.text);
+    return true;
+  }
+  return false;
+}
+
+function eyeBoostChatHas(m) {
+  const c = m.content;
+  if (typeof c === 'string') return eyeBoostHit(c);
+  if (Array.isArray(c)) return c.some(p => p && typeof p.text === 'string' && eyeBoostHit(p.text));
+  return false;
+}
+
+/* 预设里的提示词也是 role:user，且排在聊天记录之后，
+   所以不能取「最后一条 user」，要按聊天记录里的用户原话去定位。 */
 function eyeBoostChat(chat) {
   if (!Array.isArray(chat)) return;
-  for (let i = chat.length - 1; i >= 0; i--) {
-    const m = chat[i];
-    if (!m || m.role !== 'user') continue;
-    if (typeof m.content !== 'string' || !m.content.trim()) return;
-    if (eyeBoostHit(m.content)) return;
-    m.content = BOOST_TEXT + '\n' + m.content;
-    return;
+  for (const m of chat) {
+    if (m && m.role === 'user' && eyeBoostChatHas(m)) return;
+  }
+  const ctx = getCtx();
+  const hist = ctx && Array.isArray(ctx.chat) ? ctx.chat : [];
+  for (let k = hist.length - 1; k >= 0; k--) {
+    const h = hist[k];
+    if (!h || h.is_user !== true) continue;
+    const mes = String(h.mes == null ? '' : h.mes).replace(/\s+$/, '');
+    if (!mes.trim()) continue;
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const m = chat[i];
+      if (!m || m.role !== 'user') continue;
+      if (!eyeBoostChatHit(m, mes)) continue;
+      eyeBoostChatMark(m);
+      return;
+    }
   }
 }
 
 function eyeBoostPrompt(prompt) {
   if (typeof prompt !== 'string' || !prompt) return prompt;
+  if (eyeBoostHit(prompt)) return prompt;
+  const tag = boostText();
+  if (!tag) return prompt;
   const ctx = getCtx();
   const chat = ctx && Array.isArray(ctx.chat) ? ctx.chat : [];
   for (let i = chat.length - 1; i >= 0; i--) {
@@ -1349,10 +1449,29 @@ function eyeBoostPrompt(prompt) {
     if (!mes.trim() || eyeBoostHit(mes)) return prompt;
     const at = prompt.lastIndexOf(mes);
     if (at < 0) return prompt;
-    return prompt.slice(0, at) + BOOST_TEXT + '\n' + prompt.slice(at);
+    return prompt.slice(0, at) + tag + '\n' + prompt.slice(at);
   }
   return prompt;
 }
+
+/* 酒馆在组装提示词之前把整份聊天记录交给这里（coreChat 是副本，
+   改它不会写回聊天记录，也不会动输入框）。只改最后一条用户消息。 */
+function eyeBoostCore(chat) {
+  if (!Array.isArray(chat)) return;
+  for (let i = chat.length - 1; i >= 0; i--) {
+    const m = chat[i];
+    if (!m || m.is_user !== true) continue;
+    const mes = typeof m.mes === 'string' ? m.mes : '';
+    if (!mes.trim() || eyeBoostHit(mes)) return;
+    m.mes = eyeBoostInsert(mes);
+    return;
+  }
+}
+
+globalThis.eyeBoostInterceptor = function (chat) {
+  if (!boostActive()) return;
+  try { eyeBoostCore(chat); } catch (e) {}
+};
 
 let EYE_BOOST_HOOK = false;
 
@@ -1363,11 +1482,11 @@ function eyeBoostHook() {
   const ev = ctx.eventTypes || {};
   try {
     ctx.eventSource.on(ev.CHAT_COMPLETION_PROMPT_READY || 'chat_completion_prompt_ready', data => {
-      if (!boostOn()) return;
+      if (!boostActive()) return;
       try { eyeBoostChat(data && data.chat); } catch (e) {}
     });
     ctx.eventSource.on(ev.GENERATE_AFTER_COMBINE_PROMPTS || 'generate_after_combine_prompts', data => {
-      if (!boostOn() || !data) return;
+      if (!boostActive() || !data) return;
       try { data.prompt = eyeBoostPrompt(data.prompt); } catch (e) {}
     });
     EYE_BOOST_HOOK = true;
@@ -2963,6 +3082,14 @@ function presetBtnsHtml(tab) {
   ).join('');
 }
 
+/* 默认世设的分组名不一定就是大标题：四个默认类别按组名取，
+   「其他」只是前端的排除式分类，不是大标题，这类条目用它自己的标题。
+   世界书里不会出现「其他」这个标签。 */
+function presetHead(grp, wpt) {
+  const g = String(grp == null ? '' : grp).trim();
+  return BLOCK_HEADS.indexOf(g) >= 0 ? g : String(wpt == null ? '' : wpt).trim();
+}
+
 function worldPresetBtnsHtml() {
   return WORLD_PRESETS.map(gr =>
     '<div class="eye-pgroup">' +
@@ -4269,8 +4396,8 @@ function viewSetHtml(wb) {
   const on = masterOn(list);
   const mods = modsMap();
   const loaded = live.filter(e => wbConst(e)).length;
-  const row = (id, title, desc, val) =>
-    '<div class="eye-swrow">' +
+  const row = (id, title, desc, val, dim) =>
+    '<div class="eye-swrow' + (dim ? ' dim' : '') + '">' +
       '<div class="n"><b>' + esc(title) + '</b><i>' + esc(desc) + '</i></div>' +
       setSwitchHtml(id, val) +
     '</div>';
@@ -4288,7 +4415,7 @@ function viewSetHtml(wb) {
       row('eye-mod-cmd', '指令', '对任意角色下达的最高指令', mods.cmd) +
       '<div class="eye-sec-h"><span class="eye-sec-t">功能强化</span></div>' +
       row('eye-power', '强力模式', '全部词条插入到对话最末的D0位置', powerOn(list)) +
-      row('eye-boost', '输入强化', '在发送内容之前添加一条强化功能的隐藏标记', boostOn()) +
+      row('eye-boost', '输入强化', '在发送内容之前添加一条强化功能的隐藏标记', boostOn(), !boostAble()) +
       '<div class="eye-sec-h"><span class="eye-sec-t">显示</span></div>' +
       row('eye-detach', '菜单分离', '面板不再跟随悬浮球，可拖到任意位置', detachOn()) +
       row('eye-simpleanim', '简化动画', '简化六芒星菜单动画，并使其更快响应', simpleAnimOn()) +
@@ -5207,7 +5334,8 @@ function bindPanel() {
       if (BUSY) return;
       BUSY = true;
       try {
-        await fn();
+        const r = await fn();
+        if (r === false) return;
         await renderPanel();
         syncHexNodes();
       } catch (e) {
@@ -5235,6 +5363,14 @@ function bindPanel() {
     await setPower(!powerOn(wbNow));
   });
   bindSwitch('eye-boost', () => {
+    if (readLS(MASTER_KEY) === '0') {
+      tip('需先开启「全视之眼」', true);
+      return false;
+    }
+    if (!boostParts().length) {
+      tip('需先开启「监控」或「设定」', true);
+      return false;
+    }
     writeLS(BOOST_KEY, boostOn() ? '0' : '1');
   });
   bindSwitch('eye-cover', () => {
@@ -5429,15 +5565,18 @@ function bindPresets(panel) {
     if (!chip) return;
     const txt = chip.getAttribute('data-wpre') || '';
     const grp = chip.getAttribute('data-wpg') || '';
-    const toHead = grp && BLOCK_HEADS.indexOf(grp) >= 0;
+    const wpt = chip.getAttribute('data-wpt') || '';
+    /* 四个默认大标题按组名取；「其他」只是前端的排除式分类，不是大标题，
+       这类条目用它自己的标题当大标题。 */
+    const head = presetHead(grp, wpt);
     if (txt.indexOf('\n') >= 0) {
       const p = compParse(txt);
       COMP_KIND = SET_TAB === 'pers' ? 'pers' : 'world';
-      if (toHead && COMP_KIND === 'world') WORLD_HEAD = grp;
+      if (head && COMP_KIND === 'world') WORLD_HEAD = head;
       COMP_EDIT = '';
       COMP_IDX = -1;
       COMP_BLOCK = '';
-      COMP_HEAD = COMP_KIND === 'pers' ? (MON_SEL || '') : (p.head || chip.getAttribute('data-wpt') || '');
+      COMP_HEAD = COMP_KIND === 'pers' ? (MON_SEL || '') : (p.head || wpt || '');
       COMP_ROWS = p.rows.length ? p.rows : [{ t: '', x: '', d: 1 }];
       COMP_CUR = -1;
       COMP_OPEN = true;
@@ -5451,11 +5590,11 @@ function bindPresets(panel) {
     const fill = () => {
       const ti = doc.getElementById('eye-new-t');
       const inp = doc.getElementById('eye-new');
-      if (ti) ti.value = chip.getAttribute('data-wpt') || '';
+      if (ti) ti.value = wpt;
       if (inp) { inp.value = txt; inp.focus(); }
     };
-    if (!toHead || String(WORLD_HEAD || '').trim() === grp) { fill(); return; }
-    WORLD_HEAD = grp;
+    if (!head || String(WORLD_HEAD || '').trim() === head) { fill(); return; }
+    WORLD_HEAD = head;
     renderPanel().then(() => {
       const f = doc.querySelector('.eye-fold[data-fold="wpreset"]');
       if (f) f.classList.add('open');
