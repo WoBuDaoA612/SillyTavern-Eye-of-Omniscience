@@ -1168,6 +1168,7 @@ const POWER_KEY = 'dg_eye_power';   /* 1.4.1 起不再写入，只留作升级�
 const DETACH_KEY = 'dg_eye_detach';
 const PPOS_KEY = 'dg_eye_panel_pos';
 const SIMPLE_KEY = 'dg_eye_simpleanim';
+const NODE_ALPHA_KEY = 'dg_eye_nodealpha';
 const BOOST_KEY = 'dg_eye_boost';
 const COVER_KEY = 'dg_eye_cover';
 const LAST_CARD_KEY = 'dg_eye_last_card';
@@ -1235,6 +1236,27 @@ function detachOn() {
 
 function simpleAnimOn() {
   return readLS(SIMPLE_KEY) === '1';
+}
+
+/* 六个按键的透明度：0 = 比原样更实，50 = 原样，100 = 完全透明。只淡按键底，文字不受影响。 */
+function nodeAlpha() {
+  const raw = readLS(NODE_ALPHA_KEY);
+  if (raw == null || raw === '') return 50;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 50;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+function nodeBgVars(v) {
+  return [v <= 50 ? 1 : (100 - v) / 50, v >= 50 ? 0 : (50 - v) / 50];
+}
+
+function applyNodeAlpha() {
+  const hex = doc.getElementById('dg-hex');
+  if (!hex) return;
+  const p = nodeBgVars(nodeAlpha());
+  hex.style.setProperty('--dg-node-bg', String(p[0]));
+  hex.style.setProperty('--dg-node-fill', String(p[1]));
 }
 
 /* 强力模式是「规则插在哪」的唯一依据，所以它必须存在酒馆那边（settings.json 的
@@ -2544,16 +2566,17 @@ function build() {
           '<path class="dg-hex-vmark" d="M 74.7,117 l 3.2,5.2 5.2,3.2 -5.2,3.2 -3.2,5.2 -3.2,-5.2 -5.2,-3.2 5.2,-3.2 z"/>' +
         '</g>' +
       '</svg>' +
-      '<div class="dg-hex-node d1" data-act="record" style="left:170px;   top:60px"><span class="lb">记录</span></div>' +
-      '<div class="dg-hex-node d2" data-act="cmd"    style="left:265.3px; top:125px"><span class="lb">指令</span></div>' +
-      '<div class="dg-hex-node d3" data-act="world"  style="left:265.3px; top:215px"><span class="lb">设定</span></div>' +
-      '<div class="dg-hex-node d4" data-act="file"   style="left:170px;   top:280px"><span class="lb">档案</span></div>' +
-      '<div class="dg-hex-node d5" data-act="set"    style="left:74.7px;  top:215px"><span class="lb">设置</span></div>' +
-      '<div class="dg-hex-node d6" data-act="help"   style="left:74.7px;  top:125px"><span class="lb">说明</span></div>' +
+      '<div class="dg-hex-node d1" data-act="record" style="left:170px;   top:60px"><i class="bg"></i><span class="lb">记录</span></div>' +
+      '<div class="dg-hex-node d2" data-act="cmd"    style="left:265.3px; top:125px"><i class="bg"></i><span class="lb">指令</span></div>' +
+      '<div class="dg-hex-node d3" data-act="world"  style="left:265.3px; top:215px"><i class="bg"></i><span class="lb">设定</span></div>' +
+      '<div class="dg-hex-node d4" data-act="file"   style="left:170px;   top:280px"><i class="bg"></i><span class="lb">档案</span></div>' +
+      '<div class="dg-hex-node d5" data-act="set"    style="left:74.7px;  top:215px"><i class="bg"></i><span class="lb">设置</span></div>' +
+      '<div class="dg-hex-node d6" data-act="help"   style="left:74.7px;  top:125px"><i class="bg"></i><span class="lb">说明</span></div>' +
     '</div>' +
     '<div class="dg-hex-pulse"></div>' +
     '<div class="dg-hex-pulse"></div>';
   doc.body.appendChild(hex);
+  applyNodeAlpha();
 
   restorePos(ball);
   placeHex(ball);
@@ -2737,6 +2760,7 @@ function toggleHex(ball) {
   if (open) { syncHexNodes(); if (!simpleAnimOn()) startFx(); } else stopFx();
 }
 
+/* 关闭面板：面板、六芒星与球的激活态一并收起。 */
 const P = lb => ({ lb: lb, tx: lb });
 const PRESETS = {
   '奖赏': [
@@ -4401,6 +4425,15 @@ function viewSetHtml(wb) {
       '<div class="n"><b>' + esc(title) + '</b><i>' + esc(desc) + '</i></div>' +
       setSwitchHtml(id, val) +
     '</div>';
+  const rangeRow = (id, title, desc, val) =>
+    '<div class="eye-swrow">' +
+      '<div class="n"><b>' + esc(title) + '</b><i>' + esc(desc) + '</i></div>' +
+      '<div class="eye-range-wrap">' +
+        '<input type="range" class="eye-range" id="' + id + '" min="0" max="100" step="1" value="' + val +
+          '" style="--p:' + val + '%" aria-label="' + esc(title) + '">' +
+        '<span class="eye-range-v" id="' + id + '-v">' + val + '%</span>' +
+      '</div>' +
+    '</div>';
   return '<section class="eye-sec eye-help eye-settings">' +
       '<div class="eye-swrow">' +
         '<div class="n"><b>全视之眼</b><i>' +
@@ -4419,6 +4452,7 @@ function viewSetHtml(wb) {
       '<div class="eye-sec-h"><span class="eye-sec-t">显示</span></div>' +
       row('eye-detach', '菜单分离', '面板不再跟随悬浮球，可拖到任意位置', detachOn()) +
       row('eye-simpleanim', '简化动画', '简化六芒星菜单动画，并使其更快响应', simpleAnimOn()) +
+      rangeRow('eye-nodealpha', '按键透明度', '透明度越高，六个按键越淡化显示', nodeAlpha()) +
       '<div class="eye-sec-h"><span class="eye-sec-t">其他</span></div>' +
       row('eye-cover', '覆盖设定', '导入重复的设定时，可整块覆盖旧有内容', coverOn()) +
       '<div class="dg-eye-msg"></div>' +
@@ -5382,6 +5416,18 @@ function bindPanel() {
     if (hx) hx.classList.toggle('simple', simpleAnimOn());
     if (simpleAnimOn()) stopFx();
   });
+
+  const na = d.getElementById('eye-nodealpha');
+  if (na) {
+    const naV = d.getElementById('eye-nodealpha-v');
+    na.addEventListener('input', () => {
+      const v = Math.min(100, Math.max(0, Math.round(Number(na.value) || 0)));
+      na.style.setProperty('--p', v + '%');
+      if (naV) naV.textContent = v + '%';
+      writeLS(NODE_ALPHA_KEY, String(v));
+      applyNodeAlpha();
+    });
+  }
 }
 
 function bindFileBar(panel) {
