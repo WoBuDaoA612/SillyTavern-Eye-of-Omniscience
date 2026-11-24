@@ -1,19 +1,4 @@
-/* ============ 全视之眼 · 扩展适配层 ============
-   把原先依赖「酒馆助手」的四个接口换成本机实现，签名保持一致，
-   下方脚本主体一行都不用改：
-     getWorldbook(name)                     -> WorldbookEntry[]
-     updateWorldbookWith(name, updater)     -> WorldbookEntry[]
-     createWorldbookEntries(name, entries)  -> { worldbook, new_entries }
-     getCharData('current')                 -> 角色对象 | null
-
-   世界书读写优先走酒馆自己的模块（共享 worldInfoCache，写完编辑器不会读到旧数据），
-   模块路径探测失败时回退到 /api/worldinfo/get 与 /api/worldinfo/edit。
-   ================================================ */
-
-let EYE_WI = null;          // 世界书模块，false 表示探测过且没拿到
-
-/* 注意：不能缓存 getContext() 的返回值。它每次返回新对象，
-   缓存下来 characterId / chatId 就是打开页面那一刻的快照，切卡后会一直取到旧卡。 */
+let EYE_WI = null;
 function eyeCtx() {
   try {
     if (window.SillyTavern && typeof window.SillyTavern.getContext === 'function') {
@@ -25,8 +10,7 @@ function eyeCtx() {
 
 async function eyeWorldModule() {
   if (EYE_WI !== null) return EYE_WI;
-  // 用户扩展挂在 /scripts/extensions/third-party/<目录>/ 下，
-  // 所以要退三级才回到 /scripts/；再留一个二级的候选以防挂载点变化。
+
   const paths = ['../../../world-info.js', '../../world-info.js'];
   for (const p of paths) {
     try {
@@ -87,8 +71,6 @@ async function eyeWriteRaw(name, data) {
     return false;
   }
 }
-
-/* ---------- 格式转换：SillyTavern 原生 <-> 脚本使用的结构 ---------- */
 
 const EYE_POS_TO_NAME = {
   0: 'before_character_definition',
@@ -199,9 +181,6 @@ function eyeNewRaw(uid, displayIndex) {
   };
 }
 
-/* 以原始对象为底，只把脚本改动过的字段映射回去。
-   原则：值没变就一个字节都不动。原始对象里我们不认识的字段
-   （displayIndex、addMemo、triggers…）一律原样保留。 */
 function eyeApplyToRaw(o, e) {
   const r = Object.assign({}, o);
   if (e.uid !== undefined && e.uid !== null && Number(e.uid) !== Number(o.uid)) r.uid = Number(e.uid);
@@ -213,8 +192,6 @@ function eyeApplyToRaw(o, e) {
     if (st.type !== undefined) {
       const constant = st.type === 'constant';
       const vectorized = st.type === 'vectorized';
-      /* type 只有三档，反推不出 selective（ST 里它是「选择性逻辑」开关，和常驻与否无关），
-         所以这一项原样保留，不动用户的配置。 */
       if (constant !== !!o.constant) r.constant = constant;
       if (vectorized !== !!o.vectorized) r.vectorized = vectorized;
     }
@@ -317,8 +294,6 @@ function eyeNextDisplay(entries) {
   return max + 1;
 }
 
-/* ---------- 对外的四个接口 ---------- */
-
 async function getWorldbook(name) {
   const raw = await eyeReadRaw(name);
   if (!raw) throw new Error("未能找到世界书 '" + name + "'");
@@ -383,9 +358,6 @@ function getCharData(target) {
   return byName || null;
 }
 
-/* 4 条固定规则的内置版本。改这里的正文就等于发布一次新版安装包：
-   用户下次打开扩展设置的安装清单，会看到这一条变成「配置错误」，
-   对照之后由他自己决定是否覆盖。 */
 const RULES = [
   {
     name: '全视之眼',
@@ -478,23 +450,13 @@ const RULES = [
   },
 ];
 
-/* ============ 全视之眼 · 安装包定义 ============
-   扩展能写进用户环境的东西只有两类：世界书里的 4 条规则（正文见 ext_rules.js），
-   和酒馆正则列表里的 1 条隐藏监控正则。
-   什么时候写、写哪几条，由 ext_install.js 的安装清单决定，这里只放定义与原语。
-   ============================================ */
-
 function eyeSaveSettings() {
   const ctx = eyeCtx();
   if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
 }
 
-/* 四条规则词条的递归开关：内置版两项都勾。面板建条目走的是同一套值，
-   安装器新建规则也必须一致，否则删书重装后开关会变成未勾选。 */
 const EYE_RULE_RECURSION = { excludeRecursion: true, preventRecursion: true };
 
-/* 规则词条的插入位置跟随设置页的「强力模式」：开了就全部贴在对话最末的 D0，
-   关了就全部落在角色定义之后。新建和修正都按这里算，否则重装出来的规则会跟其余词条错位。 */
 function eyeRulePos(list) {
   return powerOn(list) ? { position: 4, depth: 0 } : { position: 1, depth: 0 };
 }
@@ -503,7 +465,7 @@ function eyeNewRule(uid, index, rule, pos) {
   const r = eyeNewRaw(uid, index);
   r.comment = rule.name;
   r.content = rule.content;
-  /* 常驻与否由规则自己定：「设定生成」只在输入里出现触发词时才生效，不进上下文 */
+
   r.constant = rule.constant !== false;
   r.key = Array.isArray(rule.keys) ? rule.keys.slice() : [];
   r.selective = false;
@@ -517,13 +479,10 @@ function eyeNewRule(uid, index, rule, pos) {
   return r;
 }
 
-/* 四条规则在酒馆世界书面板里的先后由 displayIndex 决定。
-   已经按内置顺序排好的就不动；缺的那条塞进前后空档，前后贴死就把它后面的整体往后挪一格。
-   顺序被拖乱时，按内置顺序把现有的几个 displayIndex 重新分配（只在这几条之间，不碰别的条目）。 */
 function eyeRuleDisplay(keys, base, seed) {
   const di = keys.map(k => {
     const e = k === null ? null : base[k];
-    /* 只认有限的整数：缺失的、null、以及早先写坏成 NaN 的，都当没有，重新排 */
+
     return e && Number.isFinite(e.displayIndex) ? e.displayIndex : null;
   });
   const have = di.filter(v => v !== null);
@@ -536,8 +495,7 @@ function eyeRuleDisplay(keys, base, seed) {
   for (let i = 0; i < out.length; i++) {
     if (out[i] !== null) continue;
     const prev = i > 0 ? out[i - 1] : null;
-    /* 取不到就是没有，必须是 null：filter 出来的数组空时 [0] 是 undefined，
-       照它算 next - 1 会得到 NaN，写进世界书就变成 null。 */
+
     const rest = out.slice(i + 1).filter(v => v !== null);
     const next = rest.length ? rest[0] : null;
     if (prev === null && next === null) out[i] = seed++;
@@ -551,8 +509,6 @@ function eyeRuleDisplay(keys, base, seed) {
   }
   return out;
 }
-
-/* ---------- 隐藏监控正则 ---------- */
 
 const EYE_REGEX_NAME = '全视之眼-隐藏监控内容';
 const EYE_REGEX_FIND = '/<全视之眼[_-]实时监控>(?:(?!<\\/?全视之眼[_-]实时监控>)[\\s\\S])*?<\\/全视之眼[_-]实时监控>|<\\/?全视之眼[_-]实时监控>/g';
@@ -571,7 +527,6 @@ const EYE_REGEX_BODY = {
   maxDepth: null,
 };
 
-/* 复制一份内置正则（数组也要复制，否则会和内置模板共用同一个数组） */
 function eyeCloneRegexBody() {
   const out = {};
   Object.keys(EYE_REGEX_BODY).forEach(k => {
@@ -581,23 +536,12 @@ function eyeCloneRegexBody() {
   return out;
 }
 
-/* ============ 全视之眼 · 安装与更新 ============
-   扩展本体跑起来之后，世界书里的规则和酒馆正则不会自动写入。
-   这里给出一份清单：缺什么、哪些与内置版不同，由用户勾选后点按钮才写。
-   扩展只负责检测和写入，「这一条要不要覆盖」永远由用户决定。
-   ============================================ */
-
 const EYE_INS_ID = 'eye-ins';
 const EYE_INS_BTN = ['apply', 'all', 'rescan'];
-
 function eyeInsHost() {
   return document.getElementById('extensions_settings') || document.getElementById('extensions_settings2');
 }
 
-/* 规则词条与内置版的差别：正文、插入位置与深度、顺序、递归开关，逐项分开看。
-   触发式规则（constant=false）还要看常驻开关与触发词；常驻规则不看这两项，
-   因为常驻是由设置页的功能开关在管，不是用户在书里随手改的。
-   启用开关（disable）永远不在这份对照里。 */
 function eyeRuleDiff(hit, rule, pos) {
   const d = {};
   if (!hit) return d;
@@ -616,16 +560,12 @@ function eyeRuleDiff(hit, rule, pos) {
   return d;
 }
 
-/* 四条在面板里的先后：displayIndex 按内置顺序必须递增。 */
 function eyeRuleSeqOk(hits) {
   const vals = hits.filter(h => h).map(h => h.displayIndex);
-  /* 序号取不到（缺字段、null、NaN）不能当成「不用检查」：
-     过滤掉就等于判定通过，被写坏的书永远修不回来。 */
+
   if (!vals.every(v => Number.isFinite(v))) return false;
   return vals.every((v, i) => i === 0 || v > vals[i - 1]);
 }
-
-/* ---------- 检测（只读） ---------- */
 
 async function eyeScan() {
   const items = [];
@@ -645,7 +585,7 @@ async function eyeScan() {
   for (let i = 0; i < RULES.length; i++) {
     const rule = RULES[i];
     const hit = hits[i];
-    /* disable 是用户在酒馆里的开关，开不开由他定，不参与「是不是最新」的判定 */
+
     const off = !!(hit && hit.disable === true);
     const diff = eyeRuleDiff(hit, rule, pos);
     const bad = !hit || !seqOk
@@ -670,7 +610,7 @@ async function eyeScan() {
   } catch (e) {
     hitRegex = null;
   }
-  /* 只认匹配式本身。渲染位置、层限定、开关这些都是用户按自己需要调的配置，不参与比对。 */
+
   const rxOff = !!(hitRegex && hitRegex.disabled === true);
   items.push({
     id: 'regex:',
@@ -684,8 +624,6 @@ async function eyeScan() {
 
   return items;
 }
-
-/* ---------- 界面 ---------- */
 
 function eyeInsEsc(s) {
   return String(s === undefined || s === null ? '' : s)
@@ -795,7 +733,6 @@ function eyeInsSetOpen(root, open) {
   root.open = !!open;
 }
 
-/* 点击全部委托在根节点：列表每次重绘都会换掉里面的节点。 */
 async function eyeInsClick(ev) {
   const root = ev.currentTarget;
   const t = ev.target;
@@ -872,23 +809,19 @@ function eyeMountInstaller(tries) {
   eyeInsRefresh();
 }
 
-/* ---------- 写入 ---------- */
-
 async function eyeInstallRules(names, report) {
   let raw = await eyeReadRaw(WB_NAME);
   if (!raw) raw = { entries: {} };
   const base = raw.entries || {};
   const out = {};
   for (const k of Object.keys(base)) out[k] = base[k];
-
   const list = Object.keys(base).map(k => base[k]);
   const pos = eyeRulePos(list);
   const used = new Set(Object.keys(base).map(Number));
   const touched = new Set();
-  const keepDisable = {};   /* 写入前记下用户对各条的开关键，回读时核对未被改动 */
+  const keepDisable = {};
   let pending = 0;
 
-  /* 先把四条规则在面板里的先后排回内置顺序，缺的条目按排出来的位置新建 */
   const keys = RULES.map(rule => {
     for (const k of Object.keys(base)) {
       if (base[k] && (base[k].comment || '') === rule.name) return k;
@@ -923,7 +856,7 @@ async function eyeInstallRules(names, report) {
         });
         continue;
       }
-      /* 哪项不对就只改哪项，其余字段照旧一个字不动 */
+
       const patch = {};
       if (diff.content) patch.content = rule.content;
       if (diff.pos) { patch.position = pos.position; patch.depth = pos.depth; }
@@ -1030,7 +963,6 @@ function eyeInstallRegex(report) {
     return;
   }
 
-  /* 只换匹配式。用户的渲染位置、层限定、开关等配置一律不动。 */
   if ((hit.findRegex || '') === EYE_REGEX_FIND) {
     report.push({
       name: EYE_REGEX_NAME,
@@ -1048,9 +980,6 @@ function eyeInstallRegex(report) {
   report.push({ name: EYE_REGEX_NAME, ok: true, msg: msg });
 }
 
-/* 规则写进世界书之后，把这本书设为全局启用。
-   失败只记一条，不影响规则本身的写入结果。
-   走酒馆自己的 onWorldInfoChange，内存和磁盘一起更新，不会被运行时回写覆盖。 */
 async function eyeEnsureGlobal(report) {
   let m = null;
   try { m = await eyeWorldModule(); } catch (e) { m = null; }
@@ -1058,34 +987,25 @@ async function eyeEnsureGlobal(report) {
     report.push({ name: '全局启用', ok: false, msg: '当前酒馆版本不支持自动设置，请在世界书面板手动勾选' });
     return;
   }
-
   const ctx = eyeCtx();
-  /* 世界书是这次刚建出来的，酒馆内存里的书名列表还是旧的，下拉里也没有它；
-     不先刷新，后面按名字找就找不到，会静默跳过。 */
   try {
     if (typeof m.updateWorldInfoList === 'function') await m.updateWorldInfoList();
     else if (ctx && typeof ctx.updateWorldInfoList === 'function') await ctx.updateWorldInfoList();
   } catch (e) {}
 
-  /* 刷新后列表里还是没有这本书，就别再往下装作设置成功了 */
   const names = Array.isArray(m.world_names) ? m.world_names : null;
   if (names && names.indexOf(WB_NAME) < 0) {
     report.push({ name: '全局启用', ok: false, msg: '酒馆的世界书列表里还没有这本，请在世界书面板手动勾选' });
     return;
   }
 
-  /* 不看「内存里是不是已经有了」就提前返回：书被删过又重新生成时，
-     内存里的启用列表可能还留着这个名字，照着它返回就会漏掉真正要做的设置。 */
   const wasOn = Array.isArray(m.selected_world_info) && m.selected_world_info.indexOf(WB_NAME) >= 0;
   let after = null;
   try {
-    /* silent 必须是字符串 'true'：酒馆用 isTrueBoolean 判断，吃不下布尔值 */
     m.onWorldInfoChange({ state: 'on', silent: 'true' }, WB_NAME);
   } catch (e) {}
   after = m.selected_world_info;
 
-  /* 上面这步是在世界书下拉里按名字找选项再点选，面板结构不同的客户端会静默找不到。
-     还没进去就改用下拉的选中值直接触发一次 —— 它走的也是酒馆自己的保存路径。 */
   if (!Array.isArray(after) || after.indexOf(WB_NAME) < 0) {
     const idx = names ? names.indexOf(WB_NAME) : -1;
     const $sel = window.jQuery ? window.jQuery('#world_info') : null;
@@ -1108,7 +1028,7 @@ async function eyeApplySelected(ids, report) {
   const ruleNames = RULES.filter(r => sel.has('rule:' + r.name)).map(r => r.name);
   if (ruleNames.length) {
     await eyeInstallRules(ruleNames, report);
-    /* 规则没写成就别急着动全局设置 */
+
     if (!report.filter(x => !x.ok).length) await eyeEnsureGlobal(report);
   }
   if (sel.has('regex:')) eyeInstallRegex(report);
@@ -1123,6 +1043,7 @@ const SNAP_PX = 90;
 const WB_NAME = '全视之眼';
 
 const EYE_IMG = 'data:image/webp;base64,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';
+const EYE_IMG_LIGHT = 'data:image/webp;base64,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';
 
 
 const KINDS = {
@@ -1164,10 +1085,11 @@ function eyeIsOn(wb) {
 
 const MOD_KEY = 'dg_eye_mods';
 const MASTER_KEY = 'dg_eye_master';
-const POWER_KEY = 'dg_eye_power';   /* 1.4.1 起不再写入，只留作升级时把旧值搬进酒馆设置 */
+const POWER_KEY = 'dg_eye_power';
 const DETACH_KEY = 'dg_eye_detach';
 const PPOS_KEY = 'dg_eye_panel_pos';
 const SIMPLE_KEY = 'dg_eye_simpleanim';
+const THEME_KEY = 'dg_eye_theme';
 const NODE_ALPHA_KEY = 'dg_eye_nodealpha';
 const BOOST_KEY = 'dg_eye_boost';
 const COVER_KEY = 'dg_eye_cover';
@@ -1219,7 +1141,6 @@ function modOfKind(kind) {
 }
 
 function wantConst(mod, list) {
-  /* 设定生成与最高指令按触发词走，任何时候都不进常驻上下文 */
   if (mod === 'gen' || mod === 'cmd') return false;
   if (!masterOn(list)) return false;
   if (!mod) return true;
@@ -1238,17 +1159,98 @@ function simpleAnimOn() {
   return readLS(SIMPLE_KEY) === '1';
 }
 
-/* 六个按键的透明度：0 = 比原样更实，50 = 原样，100 = 完全透明。只淡按键底，文字不受影响。 */
+function eyeTheme() {
+  return readLS(THEME_KEY) === 'light' ? 'light' : 'dark';
+}
+
+function themeImg() {
+  return eyeTheme() === 'light' ? EYE_IMG_LIGHT : EYE_IMG;
+}
+
+function applyTheme() {
+  const t = eyeTheme();
+  const r = doc.documentElement;
+  if (r) r.setAttribute('data-eye-theme', t);
+  const im = doc.querySelector('#dg-eye-ball img');
+  if (im) im.src = themeImg();
+  FX.pal = null;
+  try { syncStarBody(); } catch (e) {}
+  const hex = doc.getElementById('dg-hex');
+  if (hex && hex.classList.contains('open')) {
+    stopFx();
+    if (!simpleAnimOn()) startFx();
+  }
+}
+
+const STARBODY_HTML = '<polygon class="dg-hex-starbody" points="170,60 210,125 265.3,125 237.6,170 265.3,215 210,215 170,280 102.4,170 74.7,215 130,215 74.7,125 130,125" fill="url(#dg-eg-center2)" stroke="none"/>';
+
+const STARFILTER_HTML = '<filter id="dg-eg-ink" x="-15%" y="-15%" width="130%" height="130%">' +
+  '<feTurbulence type="fractalNoise" baseFrequency=".62" numOctaves="2" seed="9" result="n"/>' +
+  '<feDisplacementMap in="SourceGraphic" in2="n" scale=".85" xChannelSelector="R" yChannelSelector="G"/>' +
+  '</filter>';
+
+
+function starDecoHtml() {
+  const at = (r, deg) => {
+    const a = (deg - 90) * Math.PI / 180;
+    return [(170 + r * Math.cos(a)).toFixed(2), (170 + r * Math.sin(a)).toFixed(2)];
+  };
+  const ticks = (step, r1, r2, skip) => {
+    let d = '';
+    for (let a = 0; a < 360; a += step) {
+      if (skip && a % skip === 0) continue;
+      const p1 = at(r1, a), p2 = at(r2, a);
+      d += 'M' + p1[0] + ' ' + p1[1] + 'L' + p2[0] + ' ' + p2[1];
+    }
+    return d;
+  };
+  const tri = ['170,60 265.3,215 74.7,215', '170,280 74.7,125 265.3,125'];
+  const at170 = k => 'translate(170 170) scale(' + k + ') translate(-170 -170)';
+  let out = '<g class="dg-deco">' +
+    '<path class="dg-deco-tick" d="' + ticks(30, 119.5, 126) + '"/>' +
+    '<path class="dg-deco-tick sub" d="' + ticks(6, 122.5, 126, 30) + '"/>';
+  tri.forEach(p => { out += '<polygon class="dg-deco-lo" points="' + p + '" transform="' + at170(1.019) + '"/>'; });
+  tri.forEach(p => { out += '<polygon class="dg-deco-hi" points="' + p + '" transform="' + at170(.981) + '"/>'; });
+  out += '<g class="dg-deco-knot">';
+  [[170, 60], [265.3, 125], [265.3, 215], [170, 280], [74.7, 215], [74.7, 125]]
+    .forEach(k => { out += '<circle cx="' + k[0] + '" cy="' + k[1] + '" r="2.4"/>'; });
+  return out + '</g></g>';
+}
+
+function syncStarBody() {
+  const want = eyeTheme() === 'light';
+  const g = doc.querySelector('.dg-hex-starfill');
+  if (g) {
+    const cur = g.querySelector('.dg-hex-starbody');
+    if (want && !cur) g.insertAdjacentHTML('beforeend', STARBODY_HTML);
+    else if (!want && cur) cur.remove();
+  }
+  const svg = doc.querySelector('.dg-hex-star');
+  if (!svg) return;
+  const defs = svg.querySelector('defs');
+  const flt = svg.querySelector('#dg-eg-ink');
+  if (want && !flt && defs) defs.insertAdjacentHTML('beforeend', STARFILTER_HTML);
+  else if (!want && flt) {
+    flt.remove();
+  }
+  const deco = svg.querySelector('.dg-deco');
+  if (want && !deco) svg.insertAdjacentHTML('beforeend', starDecoHtml());
+  else if (!want && deco) deco.remove();
+}
+
+
+const NODE_DEEP = 100;
+
 function nodeAlpha() {
   const raw = readLS(NODE_ALPHA_KEY);
   if (raw == null || raw === '') return 50;
   const n = Number(raw);
   if (!Number.isFinite(n)) return 50;
-  return Math.min(100, Math.max(0, Math.round(n)));
+  return n >= 75 ? NODE_DEEP : 50;
 }
 
 function nodeBgVars(v) {
-  return [v <= 50 ? 1 : (100 - v) / 50, v >= 50 ? 0 : (50 - v) / 50];
+  return [1, v >= NODE_DEEP ? 1 : 0];
 }
 
 function applyNodeAlpha() {
@@ -1259,9 +1261,7 @@ function applyNodeAlpha() {
   hex.style.setProperty('--dg-node-fill', String(p[1]));
 }
 
-/* 强力模式是「规则插在哪」的唯一依据，所以它必须存在酒馆那边（settings.json 的
-   extension_settings），不能存在浏览器里：浏览器每个一份，手机和电脑会各读一个值，
-   同一本世界书就会被两边判成互不相同的配置。 */
+
 function eyePowerStore(create) {
   const ctx = getCtx();
   const es = ctx && ctx.extensionSettings;
@@ -1294,15 +1294,14 @@ function savePower(on) {
   return true;
 }
 
-/* 书里那 5 条规则现在实际在哪一边，多的算数。
-   只在酒馆里还没有这个设置时用一次，给 1.4.0 及以前的老用户定初值。 */
+
 function powerFromBook(list) {
   let n4 = 0, n1 = 0;
   (Array.isArray(list) ? list : []).forEach(e => {
     if (!e) return;
     const nm = String(e.comment || e.name || '');
     if (!RULES.some(r => r.name === nm)) return;
-    /* 面板取出的是 position 对象，安装器读的是原始条目（position 是数字），两种都要认 */
+
     const p = e.position;
     const obj = p && typeof p === 'object';
     const type = obj ? p.type : EYE_POS_TO_NAME[p];
@@ -1314,14 +1313,11 @@ function powerFromBook(list) {
   if (n1 > n4) return false;
   return null;
 }
-
 function powerOn(list) {
   const saved = powerSaved();
   if (saved !== null) return saved;
 
-  /* 酒馆里还没有这个设置（1.4.1 第一次跑）：先看书里那 5 条实际在哪，
-     书里没有规则（全新安装）才退回浏览器里 1.4.0 存下的旧值。
-     书是服务端唯一的那份，浏览器旧值只是本机历史，先信书才不会一升级就判错。 */
+
   const old = readLS(POWER_KEY);
   let v = powerFromBook(list);
   if (v === null) v = old === '1' ? true : (old === '0' ? false : null);
@@ -1330,17 +1326,9 @@ function powerOn(list) {
   return v;
 }
 
-/* ---------- 输入强化 ----------
-   只在发给 AI 的那一份里给用户输入加前缀，聊天记录与输入框都不动。
-   主路径：manifest 的 generate_interceptor，在酒馆组装提示词之前改 coreChat
-   里的用户消息本身，标记贴在用户那句话前面，与预设怎么写无关。
-   备用：chat 模式 CHAT_COMPLETION_PROMPT_READY 的 messages，
-   text 模式 GENERATE_AFTER_COMBINE_PROMPTS 的 prompt 串。
-   标记内容按功能开关生成：监控写入 <实时监控>，设定写入 <设定修正>。
-   监控与设定都没开、或全视之眼整体关闭时，输入强化不可用，不写入任何标记。 */
+
 const BOOST_HEAD = '<!--全视之眼最高权限系统已激活: ';
 const BOOST_TAIL = '-->';
-
 function boostOn() {
   return readLS(BOOST_KEY) === '1';
 }
@@ -1352,11 +1340,9 @@ function boostParts() {
   if (m.set) list.push('强制应用<设定修正>规则，读取当前相关的"世设补充修正"与"人设补充修正"');
   return list;
 }
-
 function boostAble() {
   return boostParts().length > 0 && readLS(MASTER_KEY) !== '0';
 }
-
 function boostActive() {
   return boostOn() && boostAble();
 }
@@ -1382,10 +1368,7 @@ function eyeBoostChatHit(m, mes) {
   return false;
 }
 
-/* 插到用户打的那句话前面。预设可以在消息外面再套一层标签，也可以什么都不套 ——
-   这里只认用户自己写的字，不认任何标签：
-   有标签时标记落在标签里紧贴原话，没有标签时它就是这条消息的第一行。
-   原话被预设改写掉、找不到了，退成整条消息的第一行，标记不会丢。 */
+
 function eyeBoostRaw() {
   const ctx = getCtx();
   const hist = ctx && Array.isArray(ctx.chat) ? ctx.chat : [];
@@ -1408,7 +1391,6 @@ function eyeBoostInsert(text) {
   }
   return tag + '\n' + text;
 }
-
 function eyeBoostChatMark(m) {
   const c = m.content;
   if (typeof c === 'string') {
@@ -1433,8 +1415,7 @@ function eyeBoostChatHas(m) {
   return false;
 }
 
-/* 预设里的提示词也是 role:user，且排在聊天记录之后，
-   所以不能取「最后一条 user」，要按聊天记录里的用户原话去定位。 */
+
 function eyeBoostChat(chat) {
   if (!Array.isArray(chat)) return;
   for (const m of chat) {
@@ -1476,8 +1457,7 @@ function eyeBoostPrompt(prompt) {
   return prompt;
 }
 
-/* 酒馆在组装提示词之前把整份聊天记录交给这里（coreChat 是副本，
-   改它不会写回聊天记录，也不会动输入框）。只改最后一条用户消息。 */
+
 function eyeBoostCore(chat) {
   if (!Array.isArray(chat)) return;
   for (let i = chat.length - 1; i >= 0; i--) {
@@ -1715,7 +1695,7 @@ function parseBody(content, kind) {
   return out;
 }
 
-/* 名单词条整篇套 <全视之眼_监视对象>，实时监控规则就是按这个标签取名单的。 */
+
 function makeBody(names, kind) {
   const k = KINDS[kind];
   const one = n => padItem(itemDepth(n) + 1, '- ' + String(n == null ? '' : n).trim());
@@ -1845,7 +1825,7 @@ function parseDoc(content, kind) {
   return blocks.filter(b => b.head);
 }
 
-/* 「设定生成」的产出是「代码块 → 标签 → yaml」三层包裹的文本，粘贴回世设页时按这套结构拆开。 */
+
 function unFence(txt) {
   return String(txt == null ? '' : txt).split(/\r?\n/)
     .filter(l => !/^[ \t]*```/.test(l)).join('\n');
@@ -2159,7 +2139,7 @@ async function importDocBlocks(card, blocks, kind, mode) {
   return keep;
 }
 
-/* 整块层面的改写：fn 拿到全部块，返回新的块数组 */
+
 async function rewriteBlocks(card, kind, fn) {
   let wbNow = null;
   try { wbNow = await getWorldbook(WB_NAME); } catch (e) {}
@@ -2486,7 +2466,7 @@ function build() {
   ball.title = '全视之眼';
   const im = doc.createElement('img');
   im.alt = '';
-  im.src = EYE_IMG;
+  im.src = themeImg();
   ball.appendChild(im);
   const gloss = doc.createElement('div');
   gloss.className = 'gloss';
@@ -2515,14 +2495,19 @@ function build() {
       '<svg class="dg-hex-star" viewBox="0 0 340 340">' +
         '<defs>' +
           '<linearGradient id="dg-eg-tri" x1="0" y1="0" x2="1" y2="1">' +
-            '<stop offset="0" stop-color="#f0cf94"/>' +
-            '<stop offset=".5" stop-color="#e7b873"/>' +
-            '<stop offset="1" stop-color="#d9a24f"/>' +
+            '<stop class="dg-g1" offset="0" stop-color="#f0cf94"/>' +
+            '<stop class="dg-g2" offset=".5" stop-color="#e7b873"/>' +
+            '<stop class="dg-g3" offset="1" stop-color="#d9a24f"/>' +
           '</linearGradient>' +
           '<radialGradient id="dg-eg-center" cx=".5" cy=".5" r=".5">' +
-            '<stop offset="0" stop-color="#e7b873" stop-opacity=".14"/>' +
-            '<stop offset=".62" stop-color="#e7b873" stop-opacity=".05"/>' +
-            '<stop offset="1" stop-color="#e7b873" stop-opacity="0"/>' +
+            '<stop class="dg-c1" offset="0" stop-color="#e7b873" stop-opacity=".14"/>' +
+            '<stop class="dg-c2" offset=".62" stop-color="#e7b873" stop-opacity=".05"/>' +
+            '<stop class="dg-c3" offset="1" stop-color="#e7b873" stop-opacity="0"/>' +
+          '</radialGradient>' +
+          '<radialGradient id="dg-eg-center2" gradientUnits="userSpaceOnUse" cx="170" cy="170" r="150">' +
+            '<stop class="dg-s1" offset="0" stop-color="#2b2b2e"/>' +
+            '<stop class="dg-s2" offset=".42" stop-color="#2b2b2e"/>' +
+            '<stop class="dg-s3" offset="1" stop-color="#2b2b2e"/>' +
           '</radialGradient>' +
           '<filter id="dg-eg-glow" x="-40%" y="-40%" width="180%" height="180%">' +
             '<feGaussianBlur stdDeviation="3.6" result="b"/>' +
@@ -2538,13 +2523,13 @@ function build() {
           '<path id="dg-eg-tp" d="M 170,86 A 84,84 0 1,1 169.9,86" fill="none"/>' +
         '</defs>' +
         '<g class="dg-hex-starfill">' +
-          '<polygon points="170,60 265.3,215 74.7,215" fill="url(#dg-eg-center)" stroke="none"/>' +
-          '<polygon points="170,280 74.7,125 265.3,125" fill="url(#dg-eg-center)" stroke="none"/>' +
+          '<polygon class="dg-hex-starpair" points="170,60 265.3,215 74.7,215" fill="url(#dg-eg-center)" stroke="none"/>' +
+          '<polygon class="dg-hex-starpair" points="170,280 74.7,125 265.3,125" fill="url(#dg-eg-center)" stroke="none"/>' +
         '</g>' +
         '<g class="dg-hex-ring slow">' +
           '<circle class="dg-hex-ringcircle" cx="170" cy="170" r="95" stroke-width="1" stroke-dasharray="3 6"/>' +
-          '<circle class="dg-hex-ringcircle" cx="170" cy="170" r="126" stroke-width=".8" stroke-dasharray="14 5" stroke-opacity=".3"/>' +
-          '<circle cx="170" cy="170" r="110" fill="none" stroke="#f0cf94" stroke-opacity=".28" stroke-width="1"/>' +
+          '<circle class="dg-hex-ringcircle dg-ring-dial" cx="170" cy="170" r="126" stroke-width=".8" stroke-dasharray="14 5" stroke-opacity=".3"/>' +
+          '<circle class="dg-hex-hair" cx="170" cy="170" r="110" fill="none" stroke="#f0cf94" stroke-opacity=".28" stroke-width="1"/>' +
         '</g>' +
         '<g class="dg-hex-ring retro">' +
           '<circle class="dg-hex-ringcircle" cx="170" cy="170" r="84" stroke-width=".8" stroke-dasharray="1 9" stroke-opacity=".45"/>' +
@@ -2576,6 +2561,7 @@ function build() {
     '<div class="dg-hex-pulse"></div>' +
     '<div class="dg-hex-pulse"></div>';
   doc.body.appendChild(hex);
+  syncStarBody();
   applyNodeAlpha();
 
   restorePos(ball);
@@ -2618,10 +2604,23 @@ function tip(txt, bad) {
   el.style.color = bad ? '#c98a7a' : '#8fae7a';
 }
 
-const FX = { running: false, raf: 0, last: 0, t: 0, comets: [], dust: [], embers: [], vTimer: 0, vIdx: 0, ctx: null };
+const FX = { running: false, raf: 0, last: 0, t: 0, comets: [], dust: [], embers: [], vTimer: 0, vIdx: 0, ctx: null, pal: null };
 const FX_C = 250, FX_ORBIT = 110;
 const FX_VX = [170, 265.3, 265.3, 170, 74.7, 74.7].map(x => x + 80);
 const FX_VY = [60, 125, 215, 280, 215, 125].map(y => y + 80);
+
+
+function fxPalette() {
+  if (FX.pal) return FX.pal;
+  FX.pal = {
+    comp: 'lighter',
+    comet: ['hsla(42,80%,72%,.65)', 'hsla(42,78%,60%,.30)', 'hsla(190,90%,55%,0)'],
+    dust: a => 'hsla(42,80%,68%,' + a + ')',
+    ember: a => 'hsla(42,82%,70%,' + a + ')',
+    fade: 'hsla(190,85%,55%,0)',
+  };
+  return FX.pal;
+}
 
 function fxFrame(ts) {
   if (!FX.running) return;
@@ -2638,16 +2637,17 @@ function fxFrame(ts) {
   ctx.fillStyle = 'rgba(0,0,0,.14)';
   ctx.fillRect(0, 0, cv.width, cv.height);
 
-  ctx.globalCompositeOperation = 'lighter';
+  const P = fxPalette();
+  ctx.globalCompositeOperation = P.comp;
 
   for (const c of FX.comets) {
     c.a += c.spd * dt;
     const x = FX_C + Math.cos(c.a) * FX_ORBIT;
     const y = FX_C + Math.sin(c.a) * FX_ORBIT;
     const g = ctx.createRadialGradient(x, y, 0, x, y, 5.5);
-    g.addColorStop(0, 'hsla(42,80%,72%,.65)');
-    g.addColorStop(.35, 'hsla(42,78%,60%,.30)');
-    g.addColorStop(1, 'hsla(190,90%,55%,0)');
+    g.addColorStop(0, P.comet[0]);
+    g.addColorStop(.35, P.comet[1]);
+    g.addColorStop(1, P.comet[2]);
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, 5.5, 0, Math.PI * 2);
@@ -2660,8 +2660,8 @@ function fxFrame(ts) {
     const y = FX_C + Math.sin(d.a) * d.r;
     const al = .07 + .035 * Math.sin(FX.t * 1.3 + d.ph);
     const g = ctx.createRadialGradient(x, y, 0, x, y, d.size * 3);
-    g.addColorStop(0, `hsla(42,80%,68%,${al})`);
-    g.addColorStop(1, 'hsla(190,85%,55%,0)');
+    g.addColorStop(0, P.dust(al));
+    g.addColorStop(1, P.fade);
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, d.size * 3, 0, Math.PI * 2);
@@ -2690,8 +2690,8 @@ function fxFrame(ts) {
     s.y += s.vy * dt;
     const k = Math.sin(Math.PI * s.life / s.max) * .5;
     const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size * 3);
-    g.addColorStop(0, `hsla(42,82%,70%,${k * .6})`);
-    g.addColorStop(1, 'hsla(190,90%,55%,0)');
+    g.addColorStop(0, P.ember(k * .6));
+    g.addColorStop(1, P.fade);
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(s.x, s.y, s.size * 3, 0, Math.PI * 2);
@@ -2703,6 +2703,7 @@ function fxFrame(ts) {
 
 function startFx() {
   if (FX.running) return;
+  if (eyeTheme() === 'light') return;
   FX.running = true; FX.last = 0;
   FX.comets = [0, 1, 2].map(i => ({ a: i * Math.PI * 2 / 3, spd: .38 }));
   FX.dust = Array.from({ length: 6 }, (_, i) => ({
@@ -2760,7 +2761,7 @@ function toggleHex(ball) {
   if (open) { syncHexNodes(); if (!simpleAnimOn()) startFx(); } else stopFx();
 }
 
-/* 关闭面板：面板、六芒星与球的激活态一并收起。 */
+
 const P = lb => ({ lb: lb, tx: lb });
 const PRESETS = {
   '奖赏': [
@@ -3106,9 +3107,7 @@ function presetBtnsHtml(tab) {
   ).join('');
 }
 
-/* 默认世设的分组名不一定就是大标题：四个默认类别按组名取，
-   「其他」只是前端的排除式分类，不是大标题，这类条目用它自己的标题。
-   世界书里不会出现「其他」这个标签。 */
+
 function presetHead(grp, wpt) {
   const g = String(grp == null ? '' : grp).trim();
   return BLOCK_HEADS.indexOf(g) >= 0 ? g : String(wpt == null ? '' : wpt).trim();
@@ -3178,7 +3177,7 @@ function viewCommandHtml(watch) {
     '</section>';
 }
 
-/* 设定页右上角的钢笔按钮：点开「设定生成」页 */
+
 function penIconHtml() {
   return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
     '<defs>' +
@@ -3221,8 +3220,7 @@ function setTabsHtml() {
     '</div>';
 }
 
-/* 设定生成页的五个选项：名称随打随记，四个分档各自下拉。
-   只活在这一个页面里，切走再回来还在。 */
+
 const GEN_OPTS = { name: '', kind: '世设', scope: '通用', nsfw: '无关', fsm: '启用' };
 
 function genSelHtml(id, vals, cur, lockVal) {
@@ -3419,7 +3417,7 @@ function treeRowHtml(n, strip, noRow) {
 let LAST_FLAT = [];
 let BLOCK_SHUT = {};
 
-/* 非默认大标题的块，单独占一行放在树的最外层，书签和发送都挂在这一行上 */
+
 function blockRowHtml(head, cnt) {
   const shut = !!BLOCK_SHUT[head];
   return '<div class="eye-member eye-node eye-grp eye-broot">' +
@@ -3434,7 +3432,7 @@ function blockRowHtml(head, cnt) {
     '</div>';
 }
 
-/* 同一个世界书条目里可能有多个大标题，按块分组；非默认大标题的块单独占一行 */
+
 function setTreeIdx(nodes, globals) {
   (nodes || []).forEach(n => {
     if (typeof globals[n.idx] === 'number') n.idx = globals[n.idx];
@@ -3480,7 +3478,7 @@ let COMP_EDIT = '';
 let COMP_IDX = -1;
 let COMP_BLOCK = '';
 let COMP_ROWS = [];
-/* -1 = 没定位到行；-2 = 光标在「条目标题」框（以此为基准加行） */
+
 let COMP_CUR = -1;
 
 function compRowsHtml() {
@@ -3544,22 +3542,19 @@ function compFocusRow(i) {
   if (a) a.focus();
 }
 
-/* 记下当前所在的行：加「同级」「下级」都以这一行为基准 */
+
 function compSetCur(i) {
   const n = parseInt(i, 10);
   COMP_CUR = (n >= 0 && n < COMP_ROWS.length) ? n : -1;
 }
 
-/* 在当前行之后插入一行；deeper 为真时层级比当前行深一级。返回新行下标。
-   d 是相对「条目标题」的层级：0 = 与条目标题同级，1 = 条目标题的下级。 */
+
 function compInsertRow(deeper) {
-  /* 光标停在「条目标题」框、或还没定位到任何行时，都以顶部条目标题为基准：
-     同级＝另一个条目标题，下级＝它的下一级。光标可能已经离开（点按钮会失焦），
-     所以同时看焦点与焦点记录。 */
+
   const hIn = doc.getElementById ? doc.getElementById('eye-comp-t') : null;
   if (COMP_CUR < 0 || (hIn && doc.activeElement === hIn)) {
     const lv = deeper ? 1 : 0;
-    /* 顶部条目标题自成一块，新行接在这一块末尾：即第一个条目标题行之前，没有则末尾 */
+
     let at = 0;
     while (at < COMP_ROWS.length && COMP_ROWS[at].d > 0) at++;
     COMP_ROWS.splice(at, 0, { t: '', x: '', d: lv });
@@ -3751,7 +3746,7 @@ function chipLabel(text) {
   return (lb.length > 10 ? lb.slice(0, 10) + '…' : lb) + ' …';
 }
 
-/* 提示语和列表用的短名：只取冒号前的标题，不带内容 */
+
 function chipTitle(text) {
   const body = splitDocTag(text, 'world').body;
   const first = String(body || '').trim().split('\n')[0] || '';
@@ -3759,7 +3754,7 @@ function chipTitle(text) {
   return lb.length > 10 ? lb.slice(0, 10) + '…' : (lb || shorten(String(text == null ? '' : text)));
 }
 
-/* 一条自定义条目的显示名：优先用单独保存的名字，老条目没有名字就按内容推一个 */
+
 function entryName(e) {
   const n = String((e && e.n) || '').trim();
   return n || chipLabel(e ? e.t : '');
@@ -3792,7 +3787,7 @@ function customMap() {
   try { raw = JSON.parse(window.localStorage.getItem(CUSTOM_KEY) || '{}') || {}; } catch (e) { raw = {}; }
   return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
 }
-/* 一条自定义条目 = 名字 + 正文。老数据存的是纯正文，读出来补一个空名字，显示时按内容推。 */
+
 function normEntry(x) {
   if (typeof x === 'string') return x ? { n: '', t: x } : null;
   if (x && typeof x === 'object' && typeof x.t === 'string' && x.t) {
@@ -3826,7 +3821,7 @@ function saveCustoms(card, group, arr) {
   try { window.localStorage.setItem(CUSTOM_KEY, JSON.stringify(m)); } catch (e) {}
 }
 
-/* 自定义条目：正文外面套一行大标题标签，记住它属于哪一块；列表里不显示这一行。 */
+
 function splitDocTag(text, kind) {
   const k = KINDS[kind || 'world'];
   const open = new RegExp('^<' + '全视之眼_' + k.label + '_(.+)>$');
@@ -3851,8 +3846,7 @@ function wrapDocTag(head, body) {
   return docTag('world', h) + '\n' + b + '\n' + docTagEnd('world', h);
 }
 
-/* 判重用的签名：不看写法，只看「第几层 + 这层写了什么」。
-   冒号全半角、缩进几格、行首短横线、行内空格、空行都不参与比较。 */
+
 function textKey(text) {
   const rows = [];
   let stack = [];
@@ -3884,7 +3878,6 @@ function topChunks(items) {
   }
   return out;
 }
-
 let BUILTIN_KEYS = null;
 function builtinKeys(group) {
   if (!BUILTIN_KEYS) {
@@ -3907,8 +3900,7 @@ const EMPTY_MSG = '内容为空，无法保存';
 function dupMsg(g) { return DUP_MSG[g] || '本条目已保存在自定义条目内'; }
 function loadedMsg(g, name) { return (LOADED_MSG[g] || '已载入「{n}」').replace('{n}', name); }
 
-/* 点开一条已有的自定义条目后，保存时覆盖它本身，不再新增一条重复的。
-   三个值一起记，避免切了卡或切了分组之后误改到另一条。 */
+
 let CUSTOM_EDIT_RAW = '';
 let CUSTOM_EDIT_GROUP = '';
 let CUSTOM_EDIT_CARD = '';
@@ -3918,7 +3910,7 @@ function clearCustomEdit() {
   CUSTOM_EDIT_CARD = '';
 }
 
-/* 存之前的必要检查：empty 空 / builtin 撞内置 / dup 已有 / '' 可以存 */
+
 function customBlock(card, group, body) {
   const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
   if (!b.trim()) return 'empty';
@@ -3929,7 +3921,7 @@ function customBlock(card, group, body) {
   return '';
 }
 
-/* 存一条自定义：added 存了 / dup 已有 / builtin 撞内置 / empty 空 */
+
 function addCustom(card, group, body, head, name) {
   const r0 = customBlock(card, group, body);
   if (r0) return r0;
@@ -3941,8 +3933,6 @@ function addCustom(card, group, body, head, name) {
   return 'added';
 }
 
-/* 从编辑区保存自定义：如果这次是从已有条目载入后改的，就替换那一条，不再新增。
-   返回 updated 已覆盖 / same 没有改动 / added / dup / builtin / empty */
 function saveCustomFromEditor(card, group, body, head, name) {
   const b = String(body == null ? '' : body).replace(/^\n+/, '').replace(/\n+$/, '');
   if (!b.trim()) return 'empty';
@@ -3968,9 +3958,7 @@ function plainItem(s) {
   return String(s == null ? '' : s).replace(/^ +/, '').replace(/^[-*·]\s*/, '').trim();
 }
 
-/* 保存前给这条自定义条目起个默认名：
-   单条取它自己的标题，没有标题就用内容；
-   复合的话，大标题不是四个默认大标题之一就用大标题，否则用第一个最高层次标题。 */
+
 function defaultCustomName(text, head, composite) {
   const body = splitDocTag(String(text == null ? '' : text), 'world').body || String(text == null ? '' : text);
   const lines = body.split(/\r?\n/).filter(l => String(l).trim());
@@ -3992,7 +3980,7 @@ function defaultCustomName(text, head, composite) {
   return (plainItem(tops[0] || '') || first || shorten(body)).slice(0, 24);
 }
 
-/* 命名弹窗：默认名已填好，确认才存。titles 是给用户看的标题，items 是待命名条目。 */
+
 function askName(title, init, onOk, onCancel) {
   const panel = doc.getElementById('dg-eye-panel');
   if (!panel) return;
@@ -4029,7 +4017,6 @@ function askName(title, init, onOk, onCancel) {
   }
 }
 
-/* 一次要存好几条时的命名弹窗：一行一条，逐条可改。 */
 function askNames(title, items, onOk, onCancel) {
   const panel = doc.getElementById('dg-eye-panel');
   if (!panel) return;
@@ -4081,7 +4068,7 @@ function subtreeText(flat, idx) {
   return out.join('\n');
 }
 
-/* 把整块内容存成一条自定义条目，名字默认就是块名 */
+
 function saveBlockCustom(head) {
   const flat = LAST_FLAT;
   const card = currentCharName();
@@ -4106,7 +4093,7 @@ function saveBlockCustom(head) {
   }, () => tip('已取消，未保存'));
 }
 
-/* 改大标题：把整块的标签换成新名字 */
+
 function askRenameBlock(head) {
   const card = currentCharName();
   if (!card) { tip('取不到当前角色卡名', true); return; }
@@ -4132,7 +4119,7 @@ function askRenameBlock(head) {
   });
 }
 
-/* 删大标题：整块连同其中的内容一起删掉 */
+
 function askDeleteBlock(head, cnt) {
   const card = currentCharName();
   if (!card) { tip('取不到当前角色卡名', true); return; }
@@ -4180,13 +4167,13 @@ function saveRowCustom(idx) {
   }, () => tip('已取消，未保存'));
 }
 
-/* 先把这次粘贴会新增哪些自定义条目算出来，不改动任何东西；命名弹窗按这个列表走 */
+
 function planPastedCustoms(card, blocks) {
   const out = { items: [], dup: 0, built: 0 };
   const seen = {};
   for (const b of (blocks || [])) {
     const bh = String(b.head == null ? '' : b.head).trim();
-    /* 大标题有区分度时整块算一条，名字就是大标题；四个默认大标题才按顶层条目切开 */
+
     const whole = !!bh && BLOCK_HEADS.indexOf(bh) < 0;
     for (const c of (whole ? [b.items] : topChunks(b.items))) {
       const body = c.join('\n');
@@ -4288,7 +4275,7 @@ function customText() {
   return joinItem(ti ? ti.value : '', inp.value);
 }
 
-/* 保存自定义的统一流程：先查重复，再弹命名窗，确认了才落盘 */
+
 function saveCustomFlow(card, group, txt, head, composite) {
   const key = textKey(txt);
   if (!key) { tip(EMPTY_MSG, true); return; }
@@ -4414,6 +4401,18 @@ function setSwitchHtml(id, val, attr) {
     ' role="switch" tabindex="0" aria-checked="' + (val ? 'true' : 'false') + '"></div>';
 }
 
+function themeRow() {
+  const t = eyeTheme();
+  const chip = (v, name) =>
+    '<span class="eye-theme-chip' + (t === v ? ' on' : '') + '" data-theme="' + v + '">' + name + '</span>';
+  return '<div class="eye-swrow">' +
+      '<div class="n"><b>主题</b><i>点击切换不同主题的配色与悬浮球图标</i></div>' +
+      '<div class="eye-theme-pick" id="eye-theme-pick">' +
+        chip('dark', '鎏金') + chip('light', '素墨') +
+      '</div>' +
+    '</div>';
+}
+
 function viewSetHtml(wb) {
   const list = Array.isArray(wb) ? wb : [];
   const live = list.filter(e => slotOn(e));
@@ -4425,15 +4424,17 @@ function viewSetHtml(wb) {
       '<div class="n"><b>' + esc(title) + '</b><i>' + esc(desc) + '</i></div>' +
       setSwitchHtml(id, val) +
     '</div>';
-  const rangeRow = (id, title, desc, val) =>
-    '<div class="eye-swrow">' +
-      '<div class="n"><b>' + esc(title) + '</b><i>' + esc(desc) + '</i></div>' +
-      '<div class="eye-range-wrap">' +
-        '<input type="range" class="eye-range" id="' + id + '" min="0" max="100" step="1" value="' + val +
-          '" style="--p:' + val + '%" aria-label="' + esc(title) + '">' +
-        '<span class="eye-range-v" id="' + id + '-v">' + val + '%</span>' +
-      '</div>' +
-    '</div>';
+  const nodeRow = () => {
+    const deep = nodeAlpha() >= NODE_DEEP;
+    const chip = (v, name, on) =>
+      '<span class="eye-theme-chip' + (on ? ' on' : '') + '" data-v="' + v + '">' + name + '</span>';
+    return '<div class="eye-swrow">' +
+        '<div class="n"><b>按键透明度</b><i>点击切换常态/加实按键</i></div>' +
+        '<div class="eye-theme-pick" id="eye-nodepick">' +
+          chip(50, '常态', !deep) + chip(NODE_DEEP, '加实', deep) +
+        '</div>' +
+      '</div>';
+  };
   return '<section class="eye-sec eye-help eye-settings">' +
       '<div class="eye-swrow">' +
         '<div class="n"><b>全视之眼</b><i>' +
@@ -4450,9 +4451,10 @@ function viewSetHtml(wb) {
       row('eye-power', '强力模式', '全部词条插入到对话最末的D0位置', powerOn(list)) +
       row('eye-boost', '输入强化', '在发送内容之前添加一条强化功能的隐藏标记', boostOn(), !boostAble()) +
       '<div class="eye-sec-h"><span class="eye-sec-t">显示</span></div>' +
+      themeRow() +
       row('eye-detach', '菜单分离', '面板不再跟随悬浮球，可拖到任意位置', detachOn()) +
       row('eye-simpleanim', '简化动画', '简化六芒星菜单动画，并使其更快响应', simpleAnimOn()) +
-      rangeRow('eye-nodealpha', '按键透明度', '透明度越高，六个按键越淡化显示', nodeAlpha()) +
+      nodeRow() +
       '<div class="eye-sec-h"><span class="eye-sec-t">其他</span></div>' +
       row('eye-cover', '覆盖设定', '导入重复的设定时，可整块覆盖旧有内容', coverOn()) +
       '<div class="dg-eye-msg"></div>' +
@@ -4515,7 +4517,7 @@ function pinMap() {
       const arr = v.filter(x => typeof x === 'string' && x);
       if (arr.length) out[k] = arr;
     } else if (typeof v === 'string' && v) {
-      out[k] = [v];     
+      out[k] = [v];
     }
   }
   return out;
@@ -4972,7 +4974,7 @@ function bindPanel() {
     const head = d.getElementById('eye-comp-t');
     if (head) {
       head.addEventListener('input', () => { COMP_HEAD = head.value; });
-      /* 光标停在「条目标题」时没有行内焦点，加行以条目标题为基准 */
+
       head.addEventListener('focusin', () => { COMP_CUR = -2; });
       head.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); compSave(); }
@@ -5417,15 +5419,29 @@ function bindPanel() {
     if (simpleAnimOn()) stopFx();
   });
 
-  const na = d.getElementById('eye-nodealpha');
-  if (na) {
-    const naV = d.getElementById('eye-nodealpha-v');
-    na.addEventListener('input', () => {
-      const v = Math.min(100, Math.max(0, Math.round(Number(na.value) || 0)));
-      na.style.setProperty('--p', v + '%');
-      if (naV) naV.textContent = v + '%';
+  const tp = d.getElementById('eye-theme-pick');
+  if (tp) {
+    tp.addEventListener('click', e => {
+      const b = e.target && e.target.closest ? e.target.closest('.eye-theme-chip') : null;
+      if (!b) return;
+      const v = b.getAttribute('data-theme');
+      if (!v || v === eyeTheme()) return;
+      writeLS(THEME_KEY, v);
+      applyTheme();
+      tp.querySelectorAll('.eye-theme-chip').forEach(c => c.classList.toggle('on', c === b));
+    });
+  }
+
+  const np = d.getElementById('eye-nodepick');
+  if (np) {
+    np.addEventListener('click', e => {
+      const b = e.target && e.target.closest ? e.target.closest('.eye-theme-chip') : null;
+      if (!b) return;
+      const v = Number(b.getAttribute('data-v'));
+      if (!Number.isFinite(v) || v === nodeAlpha()) return;
       writeLS(NODE_ALPHA_KEY, String(v));
       applyNodeAlpha();
+      np.querySelectorAll('.eye-theme-chip').forEach(c => c.classList.toggle('on', c === b));
     });
   }
 }
@@ -5612,8 +5628,7 @@ function bindPresets(panel) {
     const txt = chip.getAttribute('data-wpre') || '';
     const grp = chip.getAttribute('data-wpg') || '';
     const wpt = chip.getAttribute('data-wpt') || '';
-    /* 四个默认大标题按组名取；「其他」只是前端的排除式分类，不是大标题，
-       这类条目用它自己的标题当大标题。 */
+
     const head = presetHead(grp, wpt);
     if (txt.indexOf('\n') >= 0) {
       const p = compParse(txt);
@@ -5674,9 +5689,7 @@ function settingSendText(raw) {
   return splitHead(s) || s;
 }
 
-/* 设定生成：触发词 + 用户写的要求，一起放进聊天输入栏，不自动发送 */
-/* 标签内先放用户原话，再跟五个部分，最后用闭合标签收尾。
-   名称留空就不写这一行，其余四项总有值。 */
+
 function genSendText(req) {
   const lines = [req];
   const nm = String(GEN_OPTS.name || '').trim();
@@ -5715,7 +5728,6 @@ function doSendSetting(raw) {
   if (!t) { tip('这一条没有可发送的内容', true); return; }
   const box = d.getElementById('send_textarea');
   if (!box) { tip('没找到输入栏', true); return; }
-
   const txt = '<全视之眼_启用覆盖性设定>\n' + t + '\n</全视之眼_启用覆盖性设定>';
   const cur = box.value || '';
   box.value = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + txt : txt;
@@ -5960,6 +5972,7 @@ let EYE_ONDEL = null;
 
 function boot() {
   teardown();
+  applyTheme();
   build();
   if (!EYE_ONDEL) {
     try {
